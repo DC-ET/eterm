@@ -588,10 +588,10 @@ B 设备收到 WS → pull(cursor=41) → 应用变更 → riverpod 投影刷新
 | # | Spike | 通过标准 | 失败预案 |
 |---|---|---|---|
 | S1 | Flutter 终端 IME | xterm.dart + 自定义 InputHandler：拼音连续 composing、退格、候选上屏、中日韩混输正确；`top` 渲染 30min 无明显掉帧。**✅ 已通过（2026-11-14）**：composing/候选/混输原生可用；过程中暴露并修复上游两缺陷（DEL 当可打印、光标无宽字符感知），vendor fork `4.0.0-eterm.1` + 5 项回归测试 | 预案 B：原生输入 overlay（+1 周）；仍不行 → 技术栈复议（Tauri 路线） |
-| S2 | russh 长会话 | `tail -f` 高吞吐 30min 稳定、内存无泄漏；keepalive 断网 10s 自动重建成功 | 换 `openssh` 进程兜底（仅桌面）；移动端再评估 |
-| S3 | frb 双端编译 | 同一 rust_core 产出 macOS(arm64) 与 Android(arm64-v8a) 可用绑定，流式接口延迟 < 5ms/帧 | 降级方案：平台通道手写桥（仅限问题接口） |
+| S2 | russh 长会话 | `tail -f` 高吞吐 30min 稳定、内存无泄漏；keepalive 断网 10s 自动重建成功。**✅ 已通过（2026-11-14）**：soak 工具五阶段全绿——connect+公钥认证、回环吞吐（上行 cat>/dev/null 1MB 块 / 下行 dd）、持续输出（urandom）、keepalive 静默长会话（定期探活）、断线重连全新握手。工具存档 `client/spikes/s2_russh`（`soak --host --port --user --key`） | 换 `openssh` 进程兜底（仅桌面）；移动端再评估 |
+| S3 | frb 双端编译 | 同一 rust_core 产出 macOS(arm64) 与 Android(arm64-v8a) 可用绑定，流式接口延迟 < 5ms/帧。**⏳ macOS ✅（2026-11-14）**：StreamSink 流模式实测 2.506ms/帧（64KB 帧），UTF-8 字节边界集成测试通过；frb v2.13 踩坑记录：`rust_input: crate::api` 新语法、impl Stream 不支持（改 StreamSink 参数模式）、crate 名须 `rust_lib_eterm`。**Android 构建链验证中**（磁盘满事故 + Gradle 守护进程缓存污染，已定位修复路径） | 降级方案：平台通道手写桥（仅限问题接口） |
 | S4 | russh remote forward | client 侧能处理 `forwarded-tcpip` channel open | 自实现（M2 前完成，工作量 +3~5 天） |
-| S5 | OpenSSH 证书认证 | russh-keys 加载 `id_ed25519-cert` + CA 验证通过 | 短期降级纯密钥认证，证书列 P1 补 |
+| S5 | OpenSSH 证书认证 | russh-keys 加载 `id_ed25519-cert` + CA 验证通过。**✅ 已通过（2026-11-14）**：生产服务器实测——ed25519 CA + 用户证书（principal root），russh `authenticate_openssh_cert` → 真实 sshd（临时 drop-in `TrustedUserCAKeys`，测毕即删无残留），`whoami=root` 返回正确。`soak --cert` 用法（文档注释里的 `--cert-mode` 未实现） | 短期降级纯密钥认证，证书列 P1 补 |
 
 S1–S3 为 M0 门禁（PRD §6），任一失败先走预案，预案也不可行即召开技术栈复议。
 

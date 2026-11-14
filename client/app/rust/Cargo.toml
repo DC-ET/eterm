@@ -15,6 +15,11 @@ aes-gcm = "0.10"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 futures = "0.3"
+# SSH 会话（S2 spike 移植；版本与 spike 一致）
+russh = "0.46"
+russh-keys = "0.46"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 # 版本与 flutter_rust_bridge_codegen 保持一致（当前 codegen v2.13.0）
 flutter_rust_bridge = "=2.13.0"
 
