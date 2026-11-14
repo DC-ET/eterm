@@ -1,6 +1,8 @@
 # build artifacts
 server/bin/
-client/app/build/
+client/**/build/
+client/**/.dart_tool/
+client/**/Pods/
 target/
 *.dylib
 *.so
