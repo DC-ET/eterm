@@ -1,0 +1,21 @@
+[Unit]
+Description=eterm hub (host & credential data hub)
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eterm
+Group=eterm
+EnvironmentFile=/etc/eterm.env
+ExecStart=/usr/local/bin/eterm serve
+Restart=always
+RestartSec=3
+# 纵深加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
