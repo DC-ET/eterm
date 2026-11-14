@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -56,17 +57,20 @@ func usage() {
 	fmt.Println(`eterm — 主机与凭据数据中枢
 
 用法:
-  eterm serve          启动 HTTP 服务（默认 127.0.0.1:8080，公网暴露交给反代）
+  eterm serve          启动服务（默认 127.0.0.1:8080；配置 TLS 证书后直接对外 HTTPS）
   eterm migrate        执行数据库迁移
-  eterm create-user    交互式创建管理员与其个人 vault
+  eterm create-user [--stdin-password]
+                       交互式创建管理员与其个人 vault；
+                       --stdin-password 从 stdin 读两行（用户名/口令），供自动化部署
   eterm version        显示版本
 
 必填环境变量:
-  ETERM_DB_DSN         MySQL DSN，如 root@tcp(127.0.0.1:3306)/eterm?parseTime=true
+  ETERM_DB_DSN         MySQL DSN，如 eterm:pw@tcp(127.0.0.1:3306)/eterm?parseTime=true
   ETERM_MASTER_KEY     base64 的 64 字节主密钥（serve 必填）
   ETERM_PEPPER         口令 pepper（serve/create-user 必填）
 可选:
   ETERM_LISTEN         监听地址，默认 127.0.0.1:8080
+  ETERM_TLS_CERT/ETERM_TLS_KEY   TLS 证书与私钥路径（同时设置则启用 HTTPS）
   ETERM_IP_WHITELIST   逗号分隔 CIDR 白名单，空=不启用
   ETERM_TLS_TRUSTED_PROXY  受信反代地址，默认 127.0.0.1`)
 }
@@ -113,10 +117,26 @@ func runServe() error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	// TLS：设置 ETERM_TLS_CERT/ETERM_TLS_KEY 即启用（自签场景见 deploy/；
+	// 有域名时建议改走 Caddy/Let's Encrypt 反代）。
+	tlsCert := strings.TrimSpace(os.Getenv("ETERM_TLS_CERT"))
+	tlsKey := os.Getenv("ETERM_TLS_KEY")
+	scheme := "http"
+	if tlsCert != "" && tlsKey != "" {
+		scheme = "https"
+	}
+
 	slog.Info("eterm serve 启动", "listen", cfg.Listen, "version", version,
-		"ip_whitelist", len(cfg.IPWhitelist))
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+		"scheme", scheme, "ip_whitelist", len(cfg.IPWhitelist))
+
+	var serveErr error
+	if scheme == "https" {
+		serveErr = srv.ListenAndServeTLS(tlsCert, tlsKey)
+	} else {
+		serveErr = srv.ListenAndServe()
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
 	}
 	return nil
 }
@@ -139,6 +159,15 @@ func runMigrate() error {
 // ---- create-user ----
 
 func runCreateUser() error {
+	// 非交互模式：eterm create-user --stdin-password < pwfile（供自动化部署）
+	interactive := true
+	args := os.Args[2:]
+	for _, a := range args {
+		if a == "--stdin-password" {
+			interactive = false
+		}
+	}
+
 	pepper := strings.TrimSpace(os.Getenv("ETERM_PEPPER"))
 	if pepper == "" {
 		return errors.New("缺少必填环境变量 ETERM_PEPPER")
@@ -149,30 +178,43 @@ func runCreateUser() error {
 	}
 	defer st.Close()
 
-	username, err := promptLine("用户名: ")
-	if err != nil {
-		return err
-	}
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return errors.New("用户名不能为空")
-	}
-	if existing, err := st.GetUserByUsername(context.Background(), username); err != nil {
-		return err
-	} else if existing != nil {
-		return fmt.Errorf("用户 %q 已存在", username)
-	}
-
-	pw1, err := promptPassword("设置口令（至少 8 位）: ")
-	if err != nil {
-		return err
-	}
-	pw2, err := promptPassword("确认口令: ")
-	if err != nil {
-		return err
-	}
-	if pw1 != pw2 {
-		return errors.New("两次口令不一致")
+	var username, pw1 string
+	if interactive {
+		username, err = promptLine("用户名: ")
+		if err != nil {
+			return err
+		}
+		username = strings.TrimSpace(username)
+		if username == "" {
+			return errors.New("用户名不能为空")
+		}
+		if existing, err := st.GetUserByUsername(context.Background(), username); err != nil {
+			return err
+		} else if existing != nil {
+			return fmt.Errorf("用户 %q 已存在", username)
+		}
+		pw1, err = promptPassword("设置口令（至少 8 位）: ")
+		if err != nil {
+			return err
+		}
+		pw2, err := promptPassword("确认口令: ")
+		if err != nil {
+			return err
+		}
+		if pw1 != pw2 {
+			return errors.New("两次口令不一致")
+		}
+	} else {
+		var nameB, pwB []byte
+		nameB, pwB, err = readNameAndPasswordFromStdin()
+		if err != nil {
+			return err
+		}
+		username = strings.TrimSpace(string(nameB))
+		pw1 = strings.TrimSpace(string(pwB))
+		if username == "" {
+			return errors.New("stdin 第一行必须是用户名")
+		}
 	}
 	if len(pw1) < 8 {
 		return errors.New("口令过短（至少 8 位）")
@@ -202,6 +244,20 @@ func openPlain() (*store.Store, error) {
 		return nil, errors.New("缺少必填环境变量 ETERM_DB_DSN")
 	}
 	return store.Open(config.NormalizeDSN(dsn), nil)
+}
+
+// readNameAndPasswordFromStdin 非交互建号：stdin 两行——第一行用户名、第二行口令。
+func readNameAndPasswordFromStdin() ([]byte, []byte, error) {
+	reader := bufio.NewReader(os.Stdin)
+	name, err := reader.ReadString('\n')
+	if err != nil && name == "" {
+		return nil, nil, errors.New("stdin 为空")
+	}
+	pw, err := reader.ReadString('\n')
+	if err != nil && pw == "" {
+		return nil, nil, errors.New("stdin 缺少口令行")
+	}
+	return []byte(name), []byte(pw), nil
 }
 
 func promptLine(prompt string) (string, error) {
