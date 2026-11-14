@@ -39,6 +39,19 @@ struct Session {
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static SESSIONS: Mutex<Option<HashMap<u64, Arc<Session>>>> = Mutex::new(None);
 
+/// frb::spawn 的执行器不带 tokio reactor（russh 首个 await 即 panic：
+/// "there is no reactor running"），SSH 任务必须跑在自己的 runtime 上。
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+fn runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime 初始化失败")
+    })
+}
+
 // ---------- 信任策略（F4.4 落地 known_hosts/TOFU 前信任一切，与 S2 spike 一致） ----------
 
 struct TrustAll;
@@ -82,7 +95,7 @@ pub fn ssh_connect(
         }),
     });
     SESSIONS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, session.clone());
-    flutter_rust_bridge::spawn(async move {
+    runtime().spawn(async move {
         let reason =
             run_inner(&host, port, &user, &auth_kind, &secret, cols, rows, &mut cmd_rx, &session).await;
         emit(&session, SshEvent::Closed { reason });
@@ -122,7 +135,7 @@ pub fn ssh_events(id: u64, sink: StreamSink<SshEvent>) -> Result<(), String> {
     for ev in backlog {
         let _ = sink.add(ev);
     }
-    flutter_rust_bridge::spawn(async move {
+    runtime().spawn(async move {
         let mut rx = rx;
         loop {
             match rx.recv().await {

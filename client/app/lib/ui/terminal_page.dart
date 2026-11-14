@@ -82,11 +82,14 @@ class _TerminalPageState extends State<TerminalPage> {
             _bytes.add(ev.bytes);
           case ssh.SshEvent_Closed():
             _closed = true;
+            _bytes.add(utf8.encode('\r\n\x1b[31m[连接关闭] ${ev.reason}\x1b[0m\r\n'));
             setState(() => _failReason = ev.reason);
             return;
         }
       }
     } catch (e) {
+      _closed = true;
+      _bytes.add(utf8.encode('\r\n\x1b[31m[错误] $e\x1b[0m\r\n'));
       if (mounted) setState(() => _failReason = 'FFI 错误: $e');
     }
   }
