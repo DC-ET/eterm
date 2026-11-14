@@ -1,5 +1,5 @@
-// 终端页（M0 骨架）：xterm 渲染 + Rust SSH 会话（vendored xterm.dart 含 CJK/DEL 修复补丁）。
-// 字节流经增量 UTF-8 解码（多字节不跨帧撕裂）写入终端；输出回调直写会话。
+// 终端标签页（满幅浅色）：xterm 浅色主题 + Rust SSH 会话。
+// 增量 UTF-8 解码（多字节不跨帧撕裂）；关闭标签即断开会话（dispose）。
 
 import 'dart:async';
 import 'dart:convert';
@@ -10,49 +10,49 @@ import 'package:material_ui/material_ui.dart';
 import 'package:xterm/xterm.dart';
 
 import '../services/app_state.dart';
+import 'theme.dart';
 
-class TerminalPage extends StatefulWidget {
-  const TerminalPage({
+class TerminalTabView extends StatefulWidget {
+  const TerminalTabView({
     super.key,
     required this.host,
+    required this.terminal,
     required this.authKind,
     required this.secret,
   });
 
   final HostView host;
-  final String authKind;
+  final Terminal terminal;
+  final String authKind; // password | key
   final String secret;
 
   @override
-  State<TerminalPage> createState() => _TerminalPageState();
+  State<TerminalTabView> createState() => _TerminalTabViewState();
 }
 
-class _TerminalPageState extends State<TerminalPage> {
-  late final Terminal _term;
+class _TerminalTabViewState extends State<TerminalTabView> {
   final _bytes = StreamController<List<int>>();
   BigInt? _sessionId;
   bool _closed = false;
-  String? _failReason;
 
   @override
   void initState() {
     super.initState();
-    _term = Terminal(maxLines: 20000);
     _term.onOutput = _onOutput;
     _term.onResize = (width, height, _, _) {
       final id = _sessionId;
       if (id != null && !_closed) ssh.sshResize(id: id, cols: width, rows: height);
     };
-    _bytes.stream.transform(utf8.decoder).listen((s) => _term.write(s));
+    _bytes.stream.transform(utf8.decoder).listen(_term.write);
     _connect();
   }
+
+  Terminal get _term => widget.terminal;
 
   @override
   void dispose() {
     final id = _sessionId;
-    if (id != null && !_closed) {
-      ssh.sshClose(id: id);
-    }
+    if (id != null && !_closed) ssh.sshClose(id: id);
     _bytes.close();
     super.dispose();
   }
@@ -83,38 +83,27 @@ class _TerminalPageState extends State<TerminalPage> {
           case ssh.SshEvent_Closed():
             _closed = true;
             _bytes.add(utf8.encode('\r\n\x1b[31m[连接关闭] ${ev.reason}\x1b[0m\r\n'));
-            setState(() => _failReason = ev.reason);
             return;
         }
       }
     } catch (e) {
       _closed = true;
       _bytes.add(utf8.encode('\r\n\x1b[31m[错误] $e\x1b[0m\r\n'));
-      if (mounted) setState(() => _failReason = 'FFI 错误: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final title = '${widget.host.label} — ${widget.host.username}@'
-        '${widget.host.hostname}:${widget.host.port}';
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontSize: 14)),
-        actions: [
-          if (_failReason != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Center(
-                child: Text('已断开',
-                    style: TextStyle(color: Colors.redAccent.shade200)),
-              ),
-            ),
-        ],
-      ),
-      body: TerminalView(
+    return Container(
+      color: Et.termBg,
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      child: TerminalView(
         _term,
         autofocus: true,
+        theme: termLightTheme,
+        keyboardAppearance: Brightness.light,
+        padding: const EdgeInsets.only(left: 10, top: 8),
+        textStyle: const TerminalStyle(fontSize: 13.5),
       ),
     );
   }

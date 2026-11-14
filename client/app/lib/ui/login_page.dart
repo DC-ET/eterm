@@ -1,11 +1,12 @@
-// 登录页（M0 骨架）：服务器地址 / 用户名 / 口令 → /api/v1/auth/login。
+// 登录页（Termius 式浅色）：白卡片 + 橙色主按钮。
 // token 保存在内存（M0 重启需重登）；OS 钥匙串持久化随 M1 落地。
 
 import 'package:material_ui/material_ui.dart';
 
 import '../services/api_client.dart';
 import '../services/app_state.dart';
-import 'home_page.dart';
+import 'shell.dart';
+import 'theme.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -47,7 +48,7 @@ class _LoginPageState extends State<LoginPage> {
       );
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
-        builder: (_) => HomePage(
+        builder: (_) => ShellPage(
           api: api,
           app: AppState(api: api),
           username: result.username,
@@ -69,60 +70,71 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Et.contentBg,
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(34),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Et.cardBorder),
+          ),
           child: Form(
             key: _form,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('eterm',
-                    style: TextStyle(fontSize: 32, fontWeight: FontWeight.w600)),
+                const Row(
+                  children: [
+                    Text('eterm',
+                        style: TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                            color: Et.textPrimary,
+                            letterSpacing: -0.5)),
+                    SizedBox(width: 4),
+                    Icon(Icons.terminal, size: 22, color: Et.accent),
+                  ],
+                ),
                 const SizedBox(height: 4),
-                Text('服务器信息与密钥的统一中枢',
-                    style: TextStyle(color: Colors.grey.shade500)),
-                const SizedBox(height: 32),
-                TextFormField(
-                  controller: _server,
-                  decoration: const InputDecoration(
-                      labelText: '服务器地址', border: OutlineInputBorder()),
-                  validator: (v) =>
-                      (v == null || !v.startsWith('http')) ? '需以 http(s):// 开头' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _username,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                      labelText: '用户名', border: OutlineInputBorder()),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _password,
-                  obscureText: true,
-                  onFieldSubmitted: (_) => _busy ? null : _submit(),
-                  decoration: const InputDecoration(
-                      labelText: '口令', border: OutlineInputBorder()),
-                  validator: (v) => (v == null || v.isEmpty) ? '必填' : null,
-                ),
-                const SizedBox(height: 24),
+                const Text('服务器信息与密钥的统一中枢',
+                    style:
+                        TextStyle(fontSize: 13, color: Et.textSecondary)),
+                const SizedBox(height: 26),
+                _field(_server, '服务器地址',
+                    validator: (v) =>
+                        (v == null || !v.startsWith('http')) ? '需以 http(s):// 开头' : null),
+                const SizedBox(height: 14),
+                _field(_username, '用户名'),
+                const SizedBox(height: 14),
+                _field(_password, '口令', obscure: true),
+                const SizedBox(height: 22),
                 FilledButton(
                   onPressed: _busy ? null : _submit,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: _busy
-                        ? const SizedBox(
-                            height: 18, width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('登录'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Et.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    minimumSize: const Size(0, 46),
                   ),
+                  child: _busy
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('登录',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
                 ),
                 if (_error != null) ...[
-                  const SizedBox(height: 16),
-                  Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                  const SizedBox(height: 14),
+                  Text(_error!,
+                      style: const TextStyle(
+                          fontSize: 13, color: Color(0xFFD1242F))),
                 ],
               ],
             ),
@@ -131,4 +143,25 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
   }
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    bool obscure = false,
+    String? Function(String?)? validator,
+  }) =>
+      TextFormField(
+        controller: c,
+        obscureText: obscure,
+        autocorrect: false,
+        validator: validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
+        style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 13, color: Et.textSecondary),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        ),
+      );
 }

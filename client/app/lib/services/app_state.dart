@@ -1,4 +1,4 @@
-// 应用状态（M0 骨架）：同步折叠 → 视图模型（主机列表）、添加主机（push）。
+// 应用状态（M0.5）：同步折叠 → 视图模型（分组/主机卡片）、添加主机（push）。
 // 私钥认证暂不持久化（ssh_key 实体与密钥管理 UI 随 M1 落地），仅会话内存。
 
 import 'dart:math';
@@ -6,6 +6,13 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+
+class GroupView {
+  GroupView({required this.id, required this.label, required this.count});
+  final String id;
+  final String label;
+  final int count;
+}
 
 class HostView {
   HostView({
@@ -15,6 +22,7 @@ class HostView {
     required this.port,
     required this.username,
     this.identityId,
+    this.groupId,
   });
 
   final String id;
@@ -23,6 +31,7 @@ class HostView {
   final int port;
   final String username;
   final String? identityId; // 指向 identity 实体（口令认证）；null = 私钥（会话内存）
+  final String? groupId; // 指向 host_group；null = 未分组
 }
 
 /// 口令认证的主机密钥来自 identity.password_enc（pull 时已是明文）；
@@ -58,12 +67,35 @@ class AppState extends ChangeNotifier {
           port: (cfg['port'] as num?)?.toInt() ?? 22,
           username: (cfg['username'] ?? '') as String? ?? '',
           identityId: identityId,
+          groupId: e['group_id'] as String?,
         ));
       }
     }
     list.sort((a, b) => a.label.compareTo(b.label));
     return list;
   }
+
+  /// 分组视图（含主机计数），按 label 排序。
+  List<GroupView> get groups {
+    final names = <String, String>{};
+    for (final e in _entities.values) {
+      if (e['id'] != null && e['label'] != null && e.keys.contains('parent_id')) {
+        names[e['id'] as String] = e['label'].toString();
+      }
+    }
+    final list = names.entries
+        .map((e) => GroupView(
+              id: e.key,
+              label: e.value,
+              count: hosts.where((h) => h.groupId == e.key).length,
+            ))
+        .toList()
+      ..sort((a, b) => a.label.compareTo(b.label));
+    return list;
+  }
+
+  String? groupName(String? id) =>
+      id == null ? null : _entities['host_group/$id']?['label']?.toString();
 
   /// 连接凭据解析：identity 口令 / 会话内私钥。null = 无凭据。
   ({String authKind, String secret})? credentialFor(HostView h) {
@@ -96,7 +128,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 添加主机：host + host_protocol(ssh)；口令认证另建 identity。
+  /// 添加主机：host(+可选 group) + host_protocol(ssh)；口令认证另建 identity。
   /// 私钥认证不落库（M1），仅登记会话内存。
   Future<void> addHost({
     required String label,
@@ -105,18 +137,35 @@ class AppState extends ChangeNotifier {
     required String username,
     required bool usePassword,
     required String secret,
+    String? groupId,
+    String? newGroupName,
   }) async {
     final hostId = _newUuid();
     String? identityId;
-    final changes = <Map<String, dynamic>>[
-      {
-        'entity_type': 'host',
-        'entity_id': hostId,
+    String? effectiveGroupId = groupId;
+    final changes = <Map<String, dynamic>>[];
+    if (groupId == null && newGroupName != null && newGroupName.trim().isNotEmpty) {
+      effectiveGroupId = _newUuid();
+      changes.add({
+        'entity_type': 'host_group',
+        'entity_id': effectiveGroupId,
         'base_rev': 0,
         'op': 'upsert',
-        'data': {'label': label, 'hostname': hostname, 'tags': <String>[]},
+        'data': {'label': newGroupName.trim(), 'sort': 0},
+      });
+    }
+    changes.add({
+      'entity_type': 'host',
+      'entity_id': hostId,
+      'base_rev': 0,
+      'op': 'upsert',
+      'data': {
+        'label': label,
+        'hostname': hostname,
+        'tags': <String>[],
+        'group_id': ?effectiveGroupId,
       },
-    ];
+    });
     if (usePassword) {
       identityId = _newUuid();
       changes.add({
