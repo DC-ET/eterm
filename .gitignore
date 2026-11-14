@@ -1,0 +1,27 @@
+# build artifacts
+server/bin/
+client/app/build/
+target/
+*.dylib
+*.so
+*.dll
+
+# env & secrets
+.env
+*.env.local
+deploy/eterm.env
+
+# go
+*.test
+coverage.out
+
+# mac / editor
+.DS_Store
+.idea/
+.vscode/
+
+# flutter
+.dart_tool/
+.flutter-plugins*
+pubspec.lock
+*.g.dart
