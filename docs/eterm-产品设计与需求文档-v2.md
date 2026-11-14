@@ -97,7 +97,7 @@
 - Rust core 与 UI 完全解耦：未来 iOS / Windows / Linux 客户端只是 Flutter UI 复用，甚至可出纯 CLI。
 - 终端渲染用 **xterm.dart**；已知风险（Flutter 中文 IME）见 §9，M0 强制做 spike。
 
-### 2.4 决策四：服务端 = Go + MySQL（已拍板）
+### 2.4 决策四：服务端 = Go + MySQL（已拍板；⚠️ v1.1 修订：实现语言改为 Node/TS，见 §10 决策记录 9）
 
 - 单静态二进制，外部连接**用户已有 MySQL**（按 8.x / utf8mb4 / InnoDB 设计），`./eterm serve` 一条命令启动。
 - 职责收窄为四块：**数据 API、同步、认证与设备管理、（预留）可选代理接口**。v1.0 的 PTY/SFTP 代理/转发监听/分帧协议全部作废。
@@ -296,6 +296,7 @@ rev BIGINT, updated_at, deleted_at, created_at
 3. 加密模型 = 服务端静态加密 + TLS + 客户端 OS 钥匙串缓存。
 4. 客户端 = Flutter + Rust core（Mac + Android 先行）。
 5. 服务端 = Go + **MySQL**（复用已有实例，替代 v1.0 的 SQLite）。
+9. （2026-11-14 补）服务端实现语言改为 **Node/TS**（用户维护性优先）：API 形状/同步语义/DB schema/加密格式逐字节对齐 Go 版，客户端与存量数据零影响；Go 版归档于 git 历史。
 6. 项目代号 = **eterm**。
 7. 部署 = **公网 VPS**，M0 起即按 §7 安全基线上线。
 8. Passkey = **P1**，M0 用口令 + 设备 token 先行。

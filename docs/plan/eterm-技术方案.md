@@ -1,6 +1,7 @@
 # eterm · 技术方案
 
-> 版本：v1.0 ｜ 日期：2026-11-14
+> 版本：v1.1 ｜ 日期：2026-11-14
+> **v1.1 变更**：应用户决策，服务端实现由 Go 改为 **Node/TS**（Fastify 5 + ws + mysql2 + node-argon2 + vitest）。API 形状、同步语义、DB schema、加密格式（AES-256-GCM `v1:`）全部保持不变——客户端与存量数据零影响。Go 版已归档于 git 历史（提交 4d049e5 之前）。§3 中与语言绑定的工程细节（chi/sqlc/goose 的描述）为历史口径，SQL DDL 与 API 契约部分仍然准确，TS 实现见 `server/src/`。
 > 上游文档：[eterm-产品设计与需求文档-v2.md](../eterm-产品设计与需求文档-v2.md)（下称 PRD）。本文回答"怎么做"，所有决策以上游 PRD §10 已拍板项为准，不再重复论证"为什么"。
 > 范围：系统架构、服务端/客户端工程与技术设计、同步协议、安全设计、测试策略、M0 spike 验收标准、里程碑任务分解。
 
@@ -10,10 +11,12 @@
 
 | 层 | 选型 | 版本基线 | 关键理由 |
 |---|---|---|---|
-| 服务端语言 | Go | 1.23+ | 单静态二进制；标准库覆盖面足够 |
-| 服务端路由 | `go-chi/chi` | v5 | 轻量、中间件模型清晰、无框架锁定 |
-| 数据访问 | `sqlc` + `go-sql-driver/mysql` | sqlc 1.27+ | schema 先行 → 生成类型安全代码，避免 ORM 反射开销 |
-| 迁移 | `pressly/goose` | v3 | SQL 文件迁移，可内嵌二进制 |
+| 服务端语言 | **Node/TS**（v1.1 起，原 Go 已归档） | Node 22 + TS 5.7 | 用户维护性优先；协议/DB/加密契约与 Go 版逐字节对齐 |
+| 服务端框架 | `fastify` + `@fastify/websocket` | v5 / v11 | TS 类型完善、生态成熟；WS 升级头内建 |
+| 数据访问 | `mysql2/promise` | v3 | 连接池 + 事务；JSON/BINARY 列处理直接 |
+| 口令哈希 | `argon2`（node 原生绑定） | v0.41 | Argon2id；PHC 格式与 Go 版语义一致（t=2，下限约束） |
+| 测试 | `vitest` | v3 | 与 Go 测试矩阵一一对应（22 项） |
+| 运行 | `tsx`（dev/prod 通用） | v4 | 免构建；deploy = 源码 + npm ci |
 | WebSocket | `coder/websocket` | latest | 维护活跃、API 简洁（gorilla 之后的默认选择） |
 | 口令哈希 | `golang.org/x/crypto/argon2` | — | Argon2id（PRD §2.2） |
 | 字段加密 | 标准库 `crypto/aes` + GCM | — | AES-256-GCM，无第三方依赖 |
@@ -584,7 +587,7 @@ B 设备收到 WS → pull(cursor=41) → 应用变更 → riverpod 投影刷新
 
 | # | Spike | 通过标准 | 失败预案 |
 |---|---|---|---|
-| S1 | Flutter 终端 IME | xterm.dart + 自定义 InputHandler：拼音连续 composing、退格、候选上屏、中日韩混输正确；`top` 渲染 30min 无明显掉帧 | 预案 B：原生输入 overlay（+1 周）；仍不行 → 技术栈复议（Tauri 路线） |
+| S1 | Flutter 终端 IME | xterm.dart + 自定义 InputHandler：拼音连续 composing、退格、候选上屏、中日韩混输正确；`top` 渲染 30min 无明显掉帧。**✅ 已通过（2026-11-14）**：composing/候选/混输原生可用；过程中暴露并修复上游两缺陷（DEL 当可打印、光标无宽字符感知），vendor fork `4.0.0-eterm.1` + 5 项回归测试 | 预案 B：原生输入 overlay（+1 周）；仍不行 → 技术栈复议（Tauri 路线） |
 | S2 | russh 长会话 | `tail -f` 高吞吐 30min 稳定、内存无泄漏；keepalive 断网 10s 自动重建成功 | 换 `openssh` 进程兜底（仅桌面）；移动端再评估 |
 | S3 | frb 双端编译 | 同一 rust_core 产出 macOS(arm64) 与 Android(arm64-v8a) 可用绑定，流式接口延迟 < 5ms/帧 | 降级方案：平台通道手写桥（仅限问题接口） |
 | S4 | russh remote forward | client 侧能处理 `forwarded-tcpip` channel open | 自实现（M2 前完成，工作量 +3~5 天） |

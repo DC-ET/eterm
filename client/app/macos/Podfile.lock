@@ -1,0 +1,22 @@
+PODS:
+  - FlutterMacOS (1.0.0)
+  - rust_lib_eterm (0.0.1):
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - rust_lib_eterm (from `Flutter/ephemeral/.symlinks/plugins/rust_lib_eterm/macos`)
+
+EXTERNAL SOURCES:
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  rust_lib_eterm:
+    :path: Flutter/ephemeral/.symlinks/plugins/rust_lib_eterm/macos
+
+SPEC CHECKSUMS:
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+  rust_lib_eterm: 6e9990be0b5b9ffa443f0eea3170d78530237d7f
+
+PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
+
+COCOAPODS: 1.17.0

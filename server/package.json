@@ -1,0 +1,28 @@
+{
+  "name": "eterm-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "eterm 中枢服务端（Node/TS）：数据 API / 同步协议 / 认证与设备管理",
+  "scripts": {
+    "dev": "tsx src/main.ts serve",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/main.ts serve",
+    "migrate": "tsx src/main.ts migrate",
+    "create-user": "tsx src/main.ts create-user",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.0",
+    "argon2": "^0.41.1",
+    "fastify": "^5.2.0",
+    "mysql2": "^3.11.0",
+    "tsx": "^4.19.0",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

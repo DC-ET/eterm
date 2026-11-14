@@ -3,6 +3,8 @@
 //! 当前为 M0 骨架：字段加密（与服务端 v1 格式同构）与本地库可用，
 //! russh/frb 集成随 spike S2/S3 落地。
 
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
+
 pub mod api;
 pub mod keygen;
 pub mod sftp;
