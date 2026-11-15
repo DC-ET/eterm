@@ -52,20 +52,87 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-// ---------- 信任策略（F4.4 落地 known_hosts/TOFU 前信任一切，与 S2 spike 一致） ----------
+// ---------- 信任策略（F4.4：known_hosts TOFU） ----------
 
-struct TrustAll;
+/// 主机键 TOFU 校验器（替换 trust-all）：
+/// 首连记录指纹，后续比对；不匹配拒绝连接并留下原因（run_inner 读取后拼进错误）。
+struct HostKeyChecker {
+    host_key: String, // "host:port"
+    /// 不匹配拒绝时的详细信息（已知指纹 vs 服务器指纹）。
+    reject_reason: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+}
 
 #[async_trait::async_trait]
-impl russh::client::Handler for TrustAll {
+impl russh::client::Handler for HostKeyChecker {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::key::PublicKey,
+        server_public_key: &russh_keys::key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let fingerprint = format!("SHA256:{}", server_public_key.fingerprint());
+        let key_type = server_public_key.name().to_string();
+        match crate::store::known_host_get(&self.host_key) {
+            Ok(None) => {
+                // TOFU 首次：记录并信任
+                let first_seen = chrono_now_rfc3339();
+                match crate::store::known_host_put(
+                    &self.host_key,
+                    &fingerprint,
+                    &key_type,
+                    &first_seen,
+                ) {
+                    Ok(()) => Ok(true),
+                    Err(e) => {
+                        // 本地库不可用：拒绝并说明（russh::Error 无可携带消息的变体，
+                        // 原因经 reject_reason 由 run_inner 拼进错误）
+                        *self.reject_reason.lock().unwrap() =
+                            Some(format!("主机键校验时本地库读写失败: {e}"));
+                        Ok(false)
+                    }
+                }
+            }
+            Ok(Some(fp)) if fp == fingerprint => Ok(true),
+            Ok(Some(fp)) => {
+                // 服务器键与已记录不一致：疑似冒充，拒绝
+                *self.reject_reason.lock().unwrap() = Some(format!(
+                    "主机键不匹配（可能被中间人替换）。已记录: {fp}，服务器当前: {fingerprint}。若确知服务器重装/换键，可在 Known Hosts 页移除后重连。"
+                ));
+                Ok(false)
+            }
+            Err(e) => {
+                *self.reject_reason.lock().unwrap() =
+                    Some(format!("主机键校验时本地库读写失败: {e}"));
+                Ok(false)
+            }
+        }
     }
+}
+
+/// 当前时间的 RFC3339 UTC（秒级足够；避免引入 chrono）。
+fn chrono_now_rfc3339() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // 简易 UTC 转换（y*365.25 近似足够展示用途）
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let mut y = 1970i64;
+    let mut d = days as i64;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let yl = if leap { 366 } else { 365 };
+        if d < yl { break; }
+        d -= yl;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let ml = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 1;
+    while d >= ml[(mo - 1) as usize] { d -= ml[(mo - 1) as usize]; mo += 1; }
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 // ---------- FFI 面 ----------
@@ -189,6 +256,18 @@ pub fn ssh_close(id: u64) -> Result<(), String> {
     r
 }
 
+/// 列出已信任主机（Known Hosts 页）。
+#[flutter_rust_bridge::frb(sync)]
+pub fn known_hosts_list() -> Result<Vec<crate::store::KnownHost>, String> {
+    crate::store::known_hosts_list().map_err(|e| e.to_string())
+}
+
+/// 移除主机信任（下次连接重新 TOFU 首次记录）。
+#[flutter_rust_bridge::frb(sync)]
+pub fn known_hosts_remove(host: String) -> Result<(), String> {
+    crate::store::known_host_remove(&host).map_err(|e| e.to_string())
+}
+
 fn send_cmd(id: u64, cmd: Cmd) -> Result<(), String> {
     let tx = SESSIONS
         .lock()
@@ -242,9 +321,21 @@ async fn run_inner(
         keepalive_max: 3,
         ..Default::default()
     });
-    let mut handle = match russh::client::connect(config, (host, port), TrustAll).await {
+    let reject_reason: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let checker = HostKeyChecker {
+        host_key: format!("{host}:{port}"),
+        reject_reason: reject_reason.clone(),
+    };
+    let mut handle = match russh::client::connect(config, (host, port), checker).await {
         Ok(h) => h,
-        Err(e) => return format!("连接失败: {e}"),
+        Err(e) => {
+            // 主机键不匹配时优先给出 TOFU 详情（russh 报的是笼统断连）
+            if let Some(reason) = reject_reason.lock().unwrap().take() {
+                return reason;
+            }
+            return format!("连接失败: {e}");
+        }
     };
     match auth_kind {
         "password" => match handle.authenticate_password(user, secret).await {

@@ -37,6 +37,12 @@ pub fn open(db_path: &str) -> Result<(), StoreError> {
          CREATE TABLE IF NOT EXISTS kv (
              k TEXT PRIMARY KEY,
              v TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS known_hosts (
+             host_key    TEXT PRIMARY KEY, -- host:port
+             fingerprint TEXT NOT NULL,    -- SHA256:base64(nopad)（OpenSSH 现代格式）
+             key_type    TEXT NOT NULL,
+             first_seen  TEXT NOT NULL
          );",
     )?;
     *DB.lock().unwrap() = Some(conn);
@@ -211,6 +217,76 @@ pub fn clear_entities() -> Result<(), StoreError> {
     with_db(|c| {
         c.execute("DELETE FROM entities", [])?;
         c.execute("DELETE FROM kv WHERE k='cursor'", [])?;
+        Ok(())
+    })
+}
+
+// ---------- known_hosts（TOFU 主机信任，设备级；登出不清理） ----------
+
+/// 已信任主机键（Known Hosts 页与 SSH 校验共用）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KnownHost {
+    pub host: String,        // "host:port"
+    pub fingerprint: String, // SHA256:base64(nopad)
+    pub key_type: String,    // ssh-ed25519 / rsa-sha2-512 / ...
+    pub first_seen: String,  // RFC3339 UTC
+}
+
+/// 列出全部已信任主机（按 first_seen 倒序）。
+pub fn known_hosts_list() -> Result<Vec<KnownHost>, StoreError> {
+    with_db(|c| {
+        let mut stmt = c.prepare(
+            "SELECT host_key, fingerprint, key_type, first_seen
+             FROM known_hosts ORDER BY first_seen DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(KnownHost {
+                    host: r.get(0)?,
+                    fingerprint: r.get(1)?,
+                    key_type: r.get(2)?,
+                    first_seen: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    })
+}
+
+/// 取已记录指纹；未记录返回 None（TOFU 首次）。
+pub fn known_host_get(host_key: &str) -> Result<Option<String>, StoreError> {
+    with_db(|c| {
+        let mut stmt = c
+            .prepare("SELECT fingerprint FROM known_hosts WHERE host_key = ?1")?;
+        let mut rows = stmt.query_map([host_key], |r| r.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    })
+}
+
+/// 记录/更新主机指纹（TOFU 首次信任）。
+pub fn known_host_put(
+    host_key: &str,
+    fingerprint: &str,
+    key_type: &str,
+    first_seen: &str,
+) -> Result<(), StoreError> {
+    with_db(|c| {
+        c.execute(
+            "INSERT INTO known_hosts (host_key, fingerprint, key_type, first_seen)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(host_key) DO UPDATE SET
+               fingerprint = excluded.fingerprint,
+               key_type = excluded.key_type",
+            rusqlite::params![host_key, fingerprint, key_type, first_seen],
+        )?;
+        Ok(())
+    })
+}
+
+/// 移除主机信任（Known Hosts 页删除；下次连接重新 TOFU）。
+pub fn known_host_remove(host_key: &str) -> Result<(), StoreError> {
+    with_db(|c| {
+        c.execute("DELETE FROM known_hosts WHERE host_key = ?1", [host_key])?;
         Ok(())
     })
 }

@@ -4,13 +4,14 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import '../store.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'ssh.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit`, `run_inner`, `runtime`, `send_cmd`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Cmd`, `SessionInner`, `Session`, `TrustAll`
+// These functions are ignored because they are not marked as `pub`: `chrono_now_rfc3339`, `emit`, `run_inner`, `runtime`, `send_cmd`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Cmd`, `HostKeyChecker`, `SessionInner`, `Session`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `check_server_key`, `clone`, `fmt`
 
 /// 建连+认证+开 PTY shell（后台执行），立即返回会话 id。
@@ -50,6 +51,14 @@ void sshResize({required BigInt id, required int cols, required int rows}) =>
 /// 关闭会话（EOF + Disconnect），并从注册表移除。
 void sshClose({required BigInt id}) =>
     RustLib.instance.api.crateApiSshSshClose(id: id);
+
+/// 列出已信任主机（Known Hosts 页）。
+List<KnownHost> knownHostsList() =>
+    RustLib.instance.api.crateApiSshKnownHostsList();
+
+/// 移除主机信任（下次连接重新 TOFU 首次记录）。
+void knownHostsRemove({required String host}) =>
+    RustLib.instance.api.crateApiSshKnownHostsRemove(host: host);
 
 @freezed
 sealed class SshEvent with _$SshEvent {

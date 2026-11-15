@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 587756000;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -520788828;
 
 // Section: executor
 
@@ -135,6 +135,65 @@ fn wire__crate__api__local__init_core_impl(
             deserializer.end();
             transform_result_sse::<_, String>((move || {
                 let output_ok = crate::api::local::init_core(api_data_dir)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__ssh__known_hosts_list_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "known_hosts_list",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::ssh::known_hosts_list()?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__ssh__known_hosts_remove_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "known_hosts_remove",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_host = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::ssh::known_hosts_remove(api_host)?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -550,6 +609,22 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for crate::store::KnownHost {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_host = <String>::sse_decode(deserializer);
+        let mut var_fingerprint = <String>::sse_decode(deserializer);
+        let mut var_keyType = <String>::sse_decode(deserializer);
+        let mut var_firstSeen = <String>::sse_decode(deserializer);
+        return crate::store::KnownHost {
+            host: var_host,
+            fingerprint: var_fingerprint,
+            key_type: var_keyType,
+            first_seen: var_firstSeen,
+        };
+    }
+}
+
 impl SseDecode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -557,6 +632,18 @@ impl SseDecode for Vec<String> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::store::KnownHost> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::store::KnownHost>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -665,24 +752,44 @@ fn pde_ffi_dispatcher_sync_impl(
     match func_id {
         1 => wire__crate__api__local__clear_local_impl(ptr, rust_vec_len, data_len),
         3 => wire__crate__api__local__init_core_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__local__kv_get_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__local__kv_put_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__local__restore_session_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__local__save_session_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__ssh__ssh_close_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__ssh__ssh_connect_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__ssh__ssh_events_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__ssh__ssh_resize_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__ssh__ssh_write_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__local__store_apply_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__local__store_cursor_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__local__store_load_impl(ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__ssh__known_hosts_list_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__ssh__known_hosts_remove_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__local__kv_get_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__local__kv_put_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__local__restore_session_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__local__save_session_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__ssh__ssh_close_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__ssh__ssh_connect_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__ssh__ssh_events_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__ssh__ssh_resize_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__ssh__ssh_write_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__local__store_apply_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__local__store_cursor_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__local__store_load_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::store::KnownHost {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.host.into_into_dart().into_dart(),
+            self.fingerprint.into_into_dart().into_dart(),
+            self.key_type.into_into_dart().into_dart(),
+            self.first_seen.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::store::KnownHost {}
+impl flutter_rust_bridge::IntoIntoDart<crate::store::KnownHost> for crate::store::KnownHost {
+    fn into_into_dart(self) -> crate::store::KnownHost {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::ssh::SshEvent {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -729,12 +836,32 @@ impl SseEncode for String {
     }
 }
 
+impl SseEncode for crate::store::KnownHost {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.host, serializer);
+        <String>::sse_encode(self.fingerprint, serializer);
+        <String>::sse_encode(self.key_type, serializer);
+        <String>::sse_encode(self.first_seen, serializer);
+    }
+}
+
 impl SseEncode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::store::KnownHost> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::store::KnownHost>::sse_encode(item, serializer);
         }
     }
 }
