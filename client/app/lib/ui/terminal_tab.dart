@@ -23,12 +23,14 @@ class TerminalTabView extends StatefulWidget {
     required this.terminal,
     required this.authKind,
     required this.secret,
+    this.snippets = const [],
   });
 
   final HostView host;
   final Terminal terminal;
   final String authKind; // password | key
   final String secret;
+  final List<SnippetView> snippets; // M2：片段插入（键条 snip 键）
 
   @override
   State<TerminalTabView> createState() => _TerminalTabViewState();
@@ -201,6 +203,84 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     _showKeyboard();
   }
 
+  /// 片段选择板：选中即把脚本文本写入会话（等价粘贴，不自动回车，留确认余地）。
+  void _showSnippetSheet() {
+    if (widget.snippets.isEmpty || _phase != _TermPhase.live) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            child: Row(children: [
+              const Icon(Icons.code, size: 17, color: Et.textSecondary),
+              const SizedBox(width: 8),
+              Text('插入片段（不自动回车）',
+                  style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: Et.textPrimary)),
+            ]),
+          ),
+          const Divider(height: 1, color: Et.cardBorder),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              children: [
+                for (final s in widget.snippets)
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      final id = _sessionId;
+                      if (id != null && _phase == _TermPhase.live && s.script.isNotEmpty) {
+                        try {
+                          ssh.sshWrite(
+                              id: id,
+                              data: Uint8List.fromList(utf8.encode(s.script)));
+                        } catch (_) {}
+                      }
+                      _showKeyboard();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 11),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(s.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Et.textPrimary)),
+                          const SizedBox(height: 2),
+                          Text(
+                            s.script.split('\n').first,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontFamily: 'Menlo',
+                                fontSize: 12,
+                                color: Et.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isTouch = Platform.isAndroid || Platform.isIOS;
@@ -283,6 +363,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
               onToggleCtrl: () => setState(() => _ctrlArmed = !_ctrlArmed),
               onKeyboard: _showKeyboard,
               onPaste: _pasteClipboard,
+              onSnippets: _showSnippetSheet,
+              hasSnippets: widget.snippets.isNotEmpty,
             ),
         ],
       ),
@@ -302,6 +384,8 @@ class _ExtraKeysBar extends StatelessWidget {
     required this.onToggleCtrl,
     required this.onKeyboard,
     required this.onPaste,
+    required this.onSnippets,
+    required this.hasSnippets,
   });
 
   final bool ctrlArmed;
@@ -309,6 +393,8 @@ class _ExtraKeysBar extends StatelessWidget {
   final VoidCallback onToggleCtrl;
   final VoidCallback onKeyboard;
   final VoidCallback onPaste;
+  final VoidCallback onSnippets;
+  final bool hasSnippets;
 
   @override
   Widget build(BuildContext context) {
@@ -335,6 +421,7 @@ class _ExtraKeysBar extends StatelessWidget {
                   _key('esc', onTap: () => onSeq('\x1b')),
                   _key(':', onTap: () => onSeq(':')),
                   _key('paste', onTap: onPaste),
+                  if (hasSnippets) _key('snip', onTap: onSnippets),
                   _key('*', onTap: () => onSeq('*')),
                   _key('=', onTap: () => onSeq('=')),
                   _key('-', onTap: () => onSeq('-')),

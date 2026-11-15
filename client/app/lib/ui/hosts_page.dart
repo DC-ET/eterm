@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'add_host_dialog.dart';
+import 'sftp_page.dart';
 import 'theme.dart';
 
 class HostsPage extends StatefulWidget {
@@ -150,6 +151,10 @@ class _HostsPageState extends State<HostsPage> {
             height: 40,
             child: _MenuItemText('连接终端', Et.textPrimary)),
         const PopupMenuItem(
+            value: 'sftp',
+            height: 40,
+            child: _MenuItemText('SFTP 文件', Et.textPrimary)),
+        const PopupMenuItem(
             value: 'edit',
             height: 40,
             child: _MenuItemText('编辑主机', Et.textPrimary)),
@@ -163,12 +168,29 @@ class _HostsPageState extends State<HostsPage> {
       switch (v) {
         case 'connect':
           _connect(h);
+        case 'sftp':
+          _openSftp(h);
         case 'edit':
           _editHost(h);
         case 'delete':
           _confirmDelete(h);
       }
     });
+  }
+
+  /// 打开 SFTP 浏览页（凭据与终端同一解析链：identity → password/ssh_key）。
+  void _openSftp(HostView h) {
+    final cred = widget.app.credentialFor(h);
+    if (cred == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该主机还没有凭据，请通过卡片菜单「编辑主机」补充')),
+      );
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) =>
+          SftpPage(host: h, authKind: cred.authKind, secret: cred.secret),
+    ));
   }
 
   @override

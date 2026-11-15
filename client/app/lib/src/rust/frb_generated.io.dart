@@ -4,6 +4,8 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/local.dart';
+import 'api/portfw.dart';
+import 'api/sftp.dart';
 import 'api/ssh.dart';
 
 import 'dart:async';
@@ -28,10 +30,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<SftpProgress> dco_decode_StreamSink_sftp_progress_Sse(
+    dynamic raw,
+  );
+
+  @protected
   RustStreamSink<SshEvent> dco_decode_StreamSink_ssh_event_Sse(dynamic raw);
 
   @protected
   String dco_decode_String(dynamic raw);
+
+  @protected
+  bool dco_decode_bool(dynamic raw);
 
   @protected
   EventRow dco_decode_event_row(dynamic raw);
@@ -58,6 +68,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<SftpEntry> dco_decode_list_sftp_entry(dynamic raw);
+
+  @protected
+  SftpEntry dco_decode_sftp_entry(dynamic raw);
+
+  @protected
+  SftpProgress dco_decode_sftp_progress(dynamic raw);
+
+  @protected
   SshEvent dco_decode_ssh_event(dynamic raw);
 
   @protected
@@ -79,12 +98,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<SftpProgress> sse_decode_StreamSink_sftp_progress_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<SshEvent> sse_decode_StreamSink_ssh_event_Sse(
     SseDeserializer deserializer,
   );
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
   EventRow sse_decode_event_row(SseDeserializer deserializer);
@@ -111,6 +138,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<SftpEntry> sse_decode_list_sftp_entry(SseDeserializer deserializer);
+
+  @protected
+  SftpEntry sse_decode_sftp_entry(SseDeserializer deserializer);
+
+  @protected
+  SftpProgress sse_decode_sftp_progress(SseDeserializer deserializer);
+
+  @protected
   SshEvent sse_decode_ssh_event(SseDeserializer deserializer);
 
   @protected
@@ -132,11 +168,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
-
-  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_sftp_progress_Sse(
+    RustStreamSink<SftpProgress> self,
     SseSerializer serializer,
   );
 
@@ -148,6 +187,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
   void sse_encode_event_row(EventRow self, SseSerializer serializer);
@@ -180,6 +222,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sftp_entry(
+    List<SftpEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sftp_entry(SftpEntry self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sftp_progress(SftpProgress self, SseSerializer serializer);
+
+  @protected
   void sse_encode_ssh_event(SshEvent self, SseSerializer serializer);
 
   @protected
@@ -199,9 +253,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class

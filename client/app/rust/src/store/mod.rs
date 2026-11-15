@@ -297,6 +297,33 @@ pub fn known_host_remove(host_key: &str) -> Result<(), StoreError> {
     })
 }
 
+// ---------- TOFU 决策（终端与 SFTP 连接共用） ----------
+
+/// TOFU 决策结果：信任 / 拒绝（含给用户的原因文本）。
+pub(crate) enum TofuDecision {
+    Trust,
+    Reject(String),
+}
+
+/// 主机键 TOFU：首连记录指纹并信任；后续逐次比对，不一致拒绝。
+/// 本地库不可用时一律拒绝（安全侧），原因文本说明情况。
+pub(crate) fn tofu_decide(host_key: &str, fingerprint: &str, key_type: &str) -> TofuDecision {
+    match known_host_get(host_key) {
+        Ok(None) => {
+            let first_seen = crate::util::rfc3339_from_unix(crate::util::unix_now_secs());
+            match known_host_put(host_key, fingerprint, key_type, &first_seen) {
+                Ok(()) => TofuDecision::Trust,
+                Err(e) => TofuDecision::Reject(format!("主机键校验时本地库读写失败: {e}")),
+            }
+        }
+        Ok(Some(fp)) if fp == fingerprint => TofuDecision::Trust,
+        Ok(Some(fp)) => TofuDecision::Reject(format!(
+            "主机键不匹配（可能被中间人替换）。已记录: {fp}，服务器当前: {fingerprint}。若确知服务器重装/换键，可在 Known Hosts 页移除后重连。"
+        )),
+        Err(e) => TofuDecision::Reject(format!("主机键校验时本地库读写失败: {e}")),
+    }
+}
+
 // ---------- 本地事件日志（Logs 页；连接/主机/密钥动作，设备级） ----------
 // 时间戳统一走 crate::util::rfc3339_from_unix（评审 BUG-R1：勿再复制日历换算）。
 

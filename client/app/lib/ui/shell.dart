@@ -17,6 +17,8 @@ import 'hosts_page.dart';
 import 'keychain_page.dart';
 import 'logs_page.dart';
 import 'known_hosts_page.dart';
+import 'port_forwarding_page.dart';
+import 'snippets_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
 import 'theme.dart';
@@ -135,8 +137,8 @@ class _ShellPageState extends State<ShellPage> {
           mobileUsername: widget.username,
         ),
       1 => KeychainPage(app: widget.app),
-      2 => const PlaceholderPage(title: 'Port Forwarding', note: '端口转发管理随 M2 落地'),
-      3 => const PlaceholderPage(title: 'Snippets', note: '代码片段随 M3 落地'),
+      2 => PortForwardingPage(app: widget.app),
+      3 => SnippetsPage(app: widget.app),
       4 => const KnownHostsPage(),
       _ => const LogsPage(),
     };
@@ -192,6 +194,7 @@ class _ShellPageState extends State<ShellPage> {
                   terminal: t.terminal,
                   authKind: t.authKind,
                   secret: t.secret,
+                  snippets: widget.app.snippets,
                 ),
               ),
               // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏

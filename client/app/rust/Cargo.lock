@@ -1500,7 +1500,7 @@ dependencies = [
  "rand_core",
  "russh-cryptovec",
  "russh-keys",
- "russh-sftp",
+ "russh-sftp 2.4.0",
  "russh-util",
  "sha1",
  "sha2",
@@ -1596,6 +1596,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "russh-sftp"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bb17f72aba4314656b359ffba72c68dcbd70ed9e97497898b75498fe7198042"
+dependencies = [
+ "bitflags",
+ "bytes",
+ "chrono",
+ "dashmap 6.2.1",
+ "gloo-timers",
+ "log",
+ "serde",
+ "serde_bytes",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "russh-util"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,6 +1639,7 @@ dependencies = [
  "rusqlite",
  "russh",
  "russh-keys",
+ "russh-sftp 3.0.1",
  "serde",
  "serde_json",
  "tempfile",

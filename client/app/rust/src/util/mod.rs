@@ -52,3 +52,42 @@ mod tests {
         assert_eq!(rfc3339_from_unix(1_703_980_800), "2023-12-31T00:00:00Z");
     }
 }
+
+// ---------- 共享 tokio runtime（SSH 数据面：终端 + SFTP + 端口转发） ----------
+
+// frb::spawn 的执行器不带 tokio reactor（russh 首个 await 即 panic：
+// "there is no reactor running"），russh 相关任务必须跑在自己的 runtime 上。
+// OnceLock 单例，api/ssh 等模块共用（api/ 之外，避开 frb 扫描）。
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+/// 全局 tokio runtime（multi-thread + enable_all）。
+pub fn ssh_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime 初始化失败")
+    })
+}
+
+// ---------- 已认证 SSH 连接的对象安全视图（终端/SFTP/端口转发共用） ----------
+
+/// 已认证连接的全部下游需求。具体 Handler 类型（TOFU 校验器）留在 api::ssh 私有；
+/// impl Trait 不能做字段类型，故经对象安全 trait 以 Arc<dyn _> 持有。
+#[async_trait::async_trait]
+pub trait AuthedConn: Send + Sync {
+    /// 开会话通道（终端 PTY shell / SFTP 子系统的载体）。
+    async fn open_session(&self) -> Result<russh::Channel<russh::client::Msg>, russh::Error>;
+
+    /// 开 direct-tcpip 通道（local -L 转发的数据通路）。
+    async fn open_direct(
+        &self,
+        host: String,
+        port: u32,
+        origin_addr: String,
+        origin_port: u32,
+    ) -> Result<russh::Channel<russh::client::Msg>, russh::Error>;
+
+    /// 干净断开连接。
+    async fn shutdown(&self);
+}

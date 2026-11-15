@@ -39,23 +39,17 @@ struct Session {
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static SESSIONS: Mutex<Option<HashMap<u64, Arc<Session>>>> = Mutex::new(None);
 
-/// frb::spawn 的执行器不带 tokio reactor（russh 首个 await 即 panic：
-/// "there is no reactor running"），SSH 任务必须跑在自己的 runtime 上。
-static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+// tokio runtime 迁至 util::ssh_runtime（api/ 之外，避开 frb 扫描；终端/SFTP/端口转发共用）
+use crate::util::ssh_runtime;
 
 fn runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("tokio runtime 初始化失败")
-    })
+    ssh_runtime()
 }
 
 // ---------- 信任策略（F4.4：known_hosts TOFU） ----------
 
-/// 主机键 TOFU 校验器（替换 trust-all）：
-/// 首连记录指纹，后续比对；不匹配拒绝连接并留下原因（run_inner 读取后拼进错误）。
+/// 主机键 TOFU 校验器（私有：SFTP 连接有各自的私有 handler，共用 store::tofu_decide）。
+/// 不匹配拒绝时留下原因（run_inner 读取后拼进错误）。
 struct HostKeyChecker {
     host_key: String, // "host:port"
     /// 不匹配拒绝时的详细信息（已知指纹 vs 服务器指纹）。
@@ -72,37 +66,11 @@ impl russh::client::Handler for HostKeyChecker {
     ) -> Result<bool, Self::Error> {
         let fingerprint = format!("SHA256:{}", server_public_key.fingerprint());
         let key_type = server_public_key.name().to_string();
-        match crate::store::known_host_get(&self.host_key) {
-            Ok(None) => {
-                // TOFU 首次：记录并信任
-                let first_seen = chrono_now_rfc3339();
-                match crate::store::known_host_put(
-                    &self.host_key,
-                    &fingerprint,
-                    &key_type,
-                    &first_seen,
-                ) {
-                    Ok(()) => Ok(true),
-                    Err(e) => {
-                        // 本地库不可用：拒绝并说明（russh::Error 无可携带消息的变体，
-                        // 原因经 reject_reason 由 run_inner 拼进错误）
-                        *self.reject_reason.lock().unwrap() =
-                            Some(format!("主机键校验时本地库读写失败: {e}"));
-                        Ok(false)
-                    }
-                }
-            }
-            Ok(Some(fp)) if fp == fingerprint => Ok(true),
-            Ok(Some(fp)) => {
-                // 服务器键与已记录不一致：疑似冒充，拒绝
-                *self.reject_reason.lock().unwrap() = Some(format!(
-                    "主机键不匹配（可能被中间人替换）。已记录: {fp}，服务器当前: {fingerprint}。若确知服务器重装/换键，可在 Known Hosts 页移除后重连。"
-                ));
-                Ok(false)
-            }
-            Err(e) => {
-                *self.reject_reason.lock().unwrap() =
-                    Some(format!("主机键校验时本地库读写失败: {e}"));
+        match crate::store::tofu_decide(&self.host_key, &fingerprint, &key_type) {
+            crate::store::TofuDecision::Trust => Ok(true),
+            crate::store::TofuDecision::Reject(reason) => {
+                // russh::Error 无可携带消息的变体，原因经 reject_reason 由 run_inner 拼进错误
+                *self.reject_reason.lock().unwrap() = Some(reason);
                 Ok(false)
             }
         }
@@ -112,6 +80,84 @@ impl russh::client::Handler for HostKeyChecker {
 /// 当前时间的 RFC3339 UTC（秒级足够；避免引入 chrono）。
 fn chrono_now_rfc3339() -> String {
     crate::util::rfc3339_from_unix(crate::util::unix_now_secs())
+}
+
+/// 建连 + 认证（终端 / SFTP / 端口转发共用入口）。
+/// TOFU 校验器私有于本模块：主机键拒绝时把具体原因（含已知 vs 当前指纹）拼进错误文本。
+/// 返回对象安全视图 Arc<dyn AuthedConn>（impl Trait 不能做字段类型，调用方统一以此持有）。
+pub(crate) async fn connect_and_auth(
+    host: &str,
+    port: u16,
+    user: &str,
+    auth_kind: &str,
+    secret: &str,
+) -> Result<Arc<dyn crate::util::AuthedConn>, String> {
+    let config = Arc::new(russh::client::Config {
+        keepalive_interval: Some(Duration::from_secs(15)),
+        keepalive_max: 3,
+        ..Default::default()
+    });
+    let reject_reason: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let checker = HostKeyChecker {
+        host_key: format!("{host}:{port}"),
+        reject_reason: reject_reason.clone(),
+    };
+    let mut handle = match russh::client::connect(config, (host, port), checker).await {
+        Ok(h) => h,
+        Err(e) => {
+            // 主机键不匹配时优先给出 TOFU 详情（russh 报的是笼统断连）
+            if let Some(reason) = reject_reason.lock().unwrap().take() {
+                return Err(reason);
+            }
+            return Err(format!("连接失败: {e}"));
+        }
+    };
+    match auth_kind {
+        "password" => match handle.authenticate_password(user, secret).await {
+            Ok(true) => {}
+            Ok(false) => return Err("认证被拒绝（口令错误）".to_string()),
+            Err(e) => return Err(format!("认证失败: {e}")),
+        },
+        "key" => {
+            let key = match russh_keys::decode_secret_key(secret, None) {
+                Ok(k) => Arc::new(k),
+                Err(e) => return Err(format!("私钥解析失败: {e}")),
+            };
+            match handle.authenticate_publickey(user, key).await {
+                Ok(true) => {}
+                Ok(false) => return Err("认证被拒绝（公钥）".to_string()),
+                Err(e) => return Err(format!("认证失败: {e}")),
+            }
+        }
+        other => return Err(format!("未知认证方式: {other}")),
+    }
+    Ok(Arc::new(handle))
+}
+
+/// 已认证连接经对象安全 trait 暴露（隐藏 HostKeyChecker 类型）。
+#[async_trait::async_trait]
+impl crate::util::AuthedConn for russh::client::Handle<HostKeyChecker> {
+    async fn open_session(&self) -> Result<russh::Channel<russh::client::Msg>, russh::Error> {
+        self.channel_open_session().await
+    }
+
+    async fn open_direct(
+        &self,
+        host: String,
+        port: u32,
+        origin_addr: String,
+        origin_port: u32,
+    ) -> Result<russh::Channel<russh::client::Msg>, russh::Error> {
+        self.channel_open_direct_tcpip(host, port, origin_addr, origin_port)
+            .await
+    }
+
+    async fn shutdown(&self) {
+        let _ = self
+            .disconnect(russh::Disconnect::ByApplication, "eterm", "en")
+            .await;
+    }
 }
 
 // ---------- FFI 面 ----------
@@ -295,47 +341,11 @@ async fn run_inner(
     cmd_rx: &mut tokio::sync::mpsc::Receiver<Cmd>,
     session: &Session,
 ) -> String {
-    let config = Arc::new(russh::client::Config {
-        keepalive_interval: Some(Duration::from_secs(15)),
-        keepalive_max: 3,
-        ..Default::default()
-    });
-    let reject_reason: std::sync::Arc<std::sync::Mutex<Option<String>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(None));
-    let checker = HostKeyChecker {
-        host_key: format!("{host}:{port}"),
-        reject_reason: reject_reason.clone(),
-    };
-    let mut handle = match russh::client::connect(config, (host, port), checker).await {
+    let conn = match connect_and_auth(host, port, user, auth_kind, secret).await {
         Ok(h) => h,
-        Err(e) => {
-            // 主机键不匹配时优先给出 TOFU 详情（russh 报的是笼统断连）
-            if let Some(reason) = reject_reason.lock().unwrap().take() {
-                return reason;
-            }
-            return format!("连接失败: {e}");
-        }
+        Err(reason) => return reason,
     };
-    match auth_kind {
-        "password" => match handle.authenticate_password(user, secret).await {
-            Ok(true) => {}
-            Ok(false) => return "认证被拒绝（口令错误）".to_string(),
-            Err(e) => return format!("认证失败: {e}"),
-        },
-        "key" => {
-            let key = match russh_keys::decode_secret_key(secret, None) {
-                Ok(k) => Arc::new(k),
-                Err(e) => return format!("私钥解析失败: {e}"),
-            };
-            match handle.authenticate_publickey(user, key).await {
-                Ok(true) => {}
-                Ok(false) => return "认证被拒绝（公钥）".to_string(),
-                Err(e) => return format!("认证失败: {e}"),
-            }
-        }
-        other => return format!("未知认证方式: {other}"),
-    }
-    let mut ch = match handle.channel_open_session().await {
+    let mut ch = match conn.open_session().await {
         Ok(c) => c,
         Err(e) => return format!("打开会话通道失败: {e}"),
     };
@@ -374,8 +384,6 @@ async fn run_inner(
         }
     }
     let _ = ch.eof().await;
-    let _ = handle
-        .disconnect(russh::Disconnect::ByApplication, "eterm", "en")
-        .await;
+    conn.shutdown().await;
     "会话结束".to_string()
 }

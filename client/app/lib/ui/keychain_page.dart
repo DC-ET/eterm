@@ -165,10 +165,6 @@ class _KeyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = [
-      item.keyType,
-      if (item.fingerprint.isNotEmpty) item.fingerprint,
-    ].join(' · ');
     final usedBy = item.usedBy.isEmpty
         ? '未被使用'
         : '被 ${item.usedBy.length} 台主机使用：${item.usedBy.join("、")}';

@@ -22,6 +22,8 @@ dependencies:
   xterm:
     path: ../third_party/xterm
   web_socket_channel: ^3.0.3
+  # SFTP 上传/下载的本地文件选择（SAF / NSSavePanel）
+  file_selector: ^1.1.0
 
 # 镜像源曾把 foundation 解析到不存在的 1.9.1（无 macos 插件声明，导致注册表缺插件、
 # 桌面启动黑窗）。钉住已缓存的 2.6.0；镜像修复后可移除。
