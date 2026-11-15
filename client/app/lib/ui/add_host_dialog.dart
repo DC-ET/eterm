@@ -202,24 +202,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, label: Text('口令')),
-                    ButtonSegment(value: false, label: Text('私钥')),
-                  ],
-                  selected: {_usePassword},
-                  style: SegmentedButton.styleFrom(
-                    selectedBackgroundColor: Et.primaryBtn,
-                    selectedForegroundColor: Colors.white,
-                    backgroundColor: const Color(0xFFF1F2F5),
-                    foregroundColor: Et.textPrimary,
-                  ),
-                  showSelectedIcon: false,
-                  // 编辑模式认证方式只读（切换=删除重建，避免凭据歧义）
-                  onSelectionChanged: _isEdit
-                      ? null
-                      : (s) => setState(() => _usePassword = s.first),
-                ),
+                _authSegment(),
                 const SizedBox(height: 12),
                 _field(
                   _secret,
@@ -291,6 +274,39 @@ class _AddHostDialogState extends State<AddHostDialog> {
     );
   }
 
+  /// 认证方式分段：选中态始终清晰显示；编辑模式只读（切换=删除重建，避免凭据歧义）
+  Widget _authSegment() {
+    Widget seg(bool value, String label) {
+      final sel = _usePassword == value;
+      final radius = value
+          ? const BorderRadius.horizontal(left: Radius.circular(20))
+          : const BorderRadius.horizontal(right: Radius.circular(20));
+      return Expanded(
+        child: GestureDetector(
+          onTap: _isEdit ? null : () => setState(() => _usePassword = value),
+          child: Container(
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: sel ? Et.primaryBtn : const Color(0xFFF1F2F5),
+              borderRadius: radius,
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: sel ? Colors.white : Et.textSecondary)),
+          ),
+        ),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Row(children: [seg(true, '口令'), seg(false, '私钥')]),
+    );
+  }
+
   String get _secretLabel {
     if (_isEdit) {
       return _usePassword ? '口令（留空保持不变）' : '私钥（粘贴新 PEM 可替换；留空不变）';
@@ -298,10 +314,16 @@ class _AddHostDialogState extends State<AddHostDialog> {
     return _usePassword ? '口令' : '私钥（OpenSSH PEM）';
   }
 
+  /// 编辑且已有凭据：允许留空（保持现有凭据）。注意必须返回恒通过的
+  /// 校验器而非 null——null 会被 _field 的 `??` 替换回默认必填校验。
   String? Function(String?)? get _secretValidator {
-    if (_isEdit) return null; // 编辑：允许留空（保持现有凭据）
+    if (_isEdit && widget.app.credentialFor(widget.editHost!).available) {
+      return _noValidate;
+    }
     return (v) => (v == null || v.isEmpty) ? '必填' : null;
   }
+
+  static String? _noValidate(String? _) => null;
 
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
