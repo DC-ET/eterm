@@ -123,6 +123,8 @@ class _ShellPageState extends State<ShellPage> {
           app: widget.app,
           onOpenTerminal: openTerminal,
           openHostIds: {for (final t in tabs) t.host.id},
+          onLogout: _logout,
+          mobileUsername: widget.username,
         ),
       1 => const PlaceholderPage(
           title: 'Keychain', note: '密钥管理 UI 随 M1 落地（OS 钥匙串 + ssh_key 实体）'),
@@ -141,8 +143,8 @@ class _ShellPageState extends State<ShellPage> {
                 onDestinationSelected: (i) =>
                     setState(() => navIndex = _compactNavTarget[i]),
                 height: 62,
-                backgroundColor: Et.sidebarBg,
-                indicatorColor: Et.sidebarSelected,
+                backgroundColor: Et.mBg,
+                indicatorColor: Et.mSelected,
                 destinations: [
                   for (final (icon, label) in _compactNav)
                     NavigationDestination(
@@ -166,30 +168,56 @@ class _ShellPageState extends State<ShellPage> {
       index: activeTab + 1,
       children: [
         vaultView,
+        // 手机：终端标签条吸底（Termius 式 ←/标签/+），终端满幅无深色标题栏
         for (final t in tabs)
-          TerminalTabView(
-            key: t.key,
-            host: t.host,
-            terminal: t.terminal,
-            authKind: t.authKind,
-            secret: t.secret,
-          ),
+          compact
+              ? Column(
+                  children: [
+                    Expanded(
+                      child: TerminalTabView(
+                        key: t.key,
+                        host: t.host,
+                        terminal: t.terminal,
+                        authKind: t.authKind,
+                        secret: t.secret,
+                      ),
+                    ),
+                    _MobileTabBar(
+                      tabs: tabs,
+                      activeTab: activeTab,
+                      onSelectVault: () => setState(() => activeTab = -1),
+                      onSelectTab: (i) => setState(() => activeTab = i),
+                      onCloseTab: closeTab,
+                      onAdd: () => setState(() => activeTab = -1),
+                    ),
+                  ],
+                )
+              : TerminalTabView(
+                  key: t.key,
+                  host: t.host,
+                  terminal: t.terminal,
+                  authKind: t.authKind,
+                  secret: t.secret,
+                ),
       ],
     );
+    // 手机终端页：深色标题栏隐藏（标签条吸底接管），其余视图保留账号入口
+    final showTitleBar = !compact || activeTab == -1;
     return Scaffold(
       backgroundColor: Et.contentBg,
       body: Column(
         children: [
-          _TitleBar(
-            username: widget.username,
-            tabs: tabs,
-            activeTab: activeTab,
-            compact: compact,
-            onSelectVault: () => setState(() => activeTab = -1),
-            onSelectTab: (i) => setState(() => activeTab = i),
-            onCloseTab: closeTab,
-            onLogout: _logout,
-          ),
+          if (showTitleBar)
+            _TitleBar(
+              username: widget.username,
+              tabs: tabs,
+              activeTab: activeTab,
+              compact: compact,
+              onSelectVault: () => setState(() => activeTab = -1),
+              onSelectTab: (i) => setState(() => activeTab = i),
+              onCloseTab: closeTab,
+              onLogout: _logout,
+            ),
           if (widget.app.loading)
             const LinearProgressIndicator(minHeight: 2, color: Et.accent),
           Expanded(child: body),
@@ -213,6 +241,107 @@ const _compactNavTarget = [0, 1, 3, 5];
 int _compactNavIndex(int navIndex) {
   final i = _compactNavTarget.indexOf(navIndex);
   return i < 0 ? 0 : i;
+}
+
+// ---------- 手机终端标签条（吸底，Termius 式） ----------
+
+class _MobileTabBar extends StatelessWidget {
+  const _MobileTabBar({
+    required this.tabs,
+    required this.activeTab,
+    required this.onSelectVault,
+    required this.onSelectTab,
+    required this.onCloseTab,
+    required this.onAdd,
+  });
+
+  final List<_TerminalTab> tabs;
+  final int activeTab;
+  final VoidCallback onSelectVault;
+  final void Function(int) onSelectTab;
+  final void Function(int) onCloseTab;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 52,
+      color: Et.mBg,
+      child: Row(
+        children: [
+          // 返回 vault 列表
+          IconButton(
+            onPressed: onSelectVault,
+            icon: const Icon(Icons.arrow_back_ios_new, size: 19),
+            color: Et.textPrimary,
+            tooltip: '返回列表',
+          ),
+          // 标签 pills（横向滚动）
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < tabs.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: _pill(context, i),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 24),
+            color: Et.textPrimary,
+            tooltip: '新建连接',
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(BuildContext context, int i) {
+    final active = activeTab == i;
+    return InkWell(
+      onTap: () => onSelectTab(i),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
+        decoration: BoxDecoration(
+          color: active ? Et.mSelected : Colors.white.withAlpha(160),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 170),
+              child: Text(tabs[i].host.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                      color: Et.textPrimary)),
+            ),
+            const SizedBox(width: 5),
+            InkWell(
+              onTap: () => onCloseTab(i),
+              borderRadius: BorderRadius.circular(10),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 15, color: Et.textSecondary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ---------- 标题栏 ----------

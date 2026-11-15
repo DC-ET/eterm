@@ -36,6 +36,11 @@ abstract final class Et {
   // 终端浅色主题
   static const termBg = Color(0xFFFFFFFF);
   static const termFg = Color(0xFF1F2328);
+
+  // 移动端（Termius 风格）：浅灰绿页面底 + 浅蓝选中
+  static const mBg = Color(0xFFE9EDEA);
+  static const mSelected = Color(0xFFC7DBF7);
+  static const mFab = Color(0xFFC9DEF5);
 }
 
 /// 浅色终端配色（ANSI 全套，对齐 Termius 浅色终端）。

@@ -14,11 +14,15 @@ class HostsPage extends StatefulWidget {
     required this.app,
     required this.onOpenTerminal,
     required this.openHostIds,
+    this.onLogout,
+    this.mobileUsername = '',
   });
 
   final AppState app;
   final void Function(HostView) onOpenTerminal;
   final Set<String> openHostIds; // 已开终端标签的主机 id
+  final VoidCallback? onLogout; // 手机 app bar 账号菜单用（桌面走侧栏/标题栏）
+  final String mobileUsername; // 手机 app bar 账号菜单展示
 
   @override
   State<HostsPage> createState() => _HostsPageState();
@@ -27,6 +31,7 @@ class HostsPage extends StatefulWidget {
 class _HostsPageState extends State<HostsPage> {
   final _search = TextEditingController();
   String? _groupFilter; // null = 全部
+  bool _showSearch = false; // 手机 app bar 搜索展开
 
   @override
   void initState() {
@@ -175,13 +180,13 @@ class _HostsPageState extends State<HostsPage> {
         final h = _matched;
         final exact = h.length == 1 ? h.first : null;
         final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
+        if (compact) return _mobileHosts(context, groups: g, hosts: h);
         return Padding(
-          padding:
-              EdgeInsets.fromLTRB(compact ? 14 : 20, 14, compact ? 14 : 20, 0),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 搜索行（手机：Connect 按钮不占位，回车连接唯一匹配仍可用）
+              // 搜索行
               Row(
                 children: [
                   Expanded(
@@ -206,10 +211,8 @@ class _HostsPageState extends State<HostsPage> {
                               // 回车：唯一匹配直接连接
                               onSubmitted: (_) =>
                                   exact == null ? null : _connect(exact),
-                              decoration: InputDecoration(
-                                hintText: compact
-                                    ? '查找主机…'
-                                    : '查找主机或 user@hostname…（回车连接唯一匹配）',
+                              decoration: const InputDecoration(
+                                hintText: '查找主机或 user@hostname…（回车连接唯一匹配）',
                                 border: InputBorder.none,
                                 isDense: true,
                               ),
@@ -228,23 +231,21 @@ class _HostsPageState extends State<HostsPage> {
                       ),
                     ),
                   ),
-                  if (!compact) ...[
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      onPressed: exact == null ? null : () => _connect(exact),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Et.primaryBtn,
-                        disabledBackgroundColor: const Color(0xFFC9CBD3),
-                        foregroundColor: Colors.white,
-                        disabledForegroundColor: Colors.white60,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(9)),
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        minimumSize: const Size(0, 40),
-                      ),
-                      child: const Text('Connect'),
+                  const SizedBox(width: 10),
+                  FilledButton(
+                    onPressed: exact == null ? null : () => _connect(exact),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Et.primaryBtn,
+                      disabledBackgroundColor: const Color(0xFFC9CBD3),
+                      foregroundColor: Colors.white,
+                      disabledForegroundColor: Colors.white60,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9)),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      minimumSize: const Size(0, 40),
                     ),
-                  ],
+                    child: const Text('Connect'),
+                  ),
                 ],
               ),
               const SizedBox(height: 14),
@@ -271,12 +272,9 @@ class _HostsPageState extends State<HostsPage> {
                       backgroundColor: Colors.white,
                     ),
                   const Spacer(),
-                  // 视图切换为无功能占位，桌面展示、手机不占空间
-                  if (!compact) ...[
-                    _viewToggle(Icons.grid_view_rounded, true),
-                    _viewToggle(Icons.style_outlined, false),
-                    _viewToggle(Icons.keyboard_alt_outlined, false),
-                  ],
+                  _viewToggle(Icons.grid_view_rounded, true),
+                  _viewToggle(Icons.style_outlined, false),
+                  _viewToggle(Icons.keyboard_alt_outlined, false),
                 ],
               ),
               const SizedBox(height: 8),
@@ -296,6 +294,231 @@ class _HostsPageState extends State<HostsPage> {
         );
       },
     );
+  }
+
+  // ---------- 手机布局（Termius 式：浅色 app bar + 单列列表卡 + FAB） ----------
+
+  Widget _mobileHosts(BuildContext context,
+      {required List<GroupView> groups, required List<HostView> hosts}) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_groupFilter != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: InputChip(
+              label: Text('分组：${widget.app.groupName(_groupFilter) ?? ''}'),
+              onDeleted: () => setState(() => _groupFilter = null),
+              backgroundColor: Colors.white,
+            ),
+          ),
+        Expanded(
+          child: widget.app.error == 'unauthorized'
+              ? const SizedBox.shrink()
+              : widget.app.error != null
+                  ? _CenterNote('同步失败: ${widget.app.error}')
+                  : _mobileList(groups: groups, hosts: hosts),
+        ),
+      ],
+    );
+    return Container(
+      color: Et.mBg,
+      child: Stack(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _mobileAppBar(context),
+                if (_showSearch) _mobileSearch(),
+                if (widget.app.loading)
+                  const LinearProgressIndicator(
+                      minHeight: 2, color: Et.accent),
+                Expanded(child: content),
+              ],
+            ),
+          ),
+          // FAB：新建主机
+          Positioned(
+            right: 18,
+            bottom: 84,
+            child: Material(
+              color: Et.mFab,
+              borderRadius: BorderRadius.circular(22),
+              child: InkWell(
+                onTap: _addHost,
+                borderRadius: BorderRadius.circular(22),
+                child: const SizedBox(
+                  width: 62,
+                  height: 62,
+                  child: Icon(Icons.add, size: 30, color: Et.textPrimary),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mobileAppBar(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
+      child: Row(
+        children: [
+          // 账号胶囊：点击弹菜单（登出）
+          InkWell(
+            onTap: () => _accountMenu(context),
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(150),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.dns, size: 17, color: Et.textPrimary),
+                  SizedBox(width: 6),
+                  Text('Vaults',
+                      style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: Et.textPrimary)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Text('Hosts',
+              style: TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w700,
+                  color: Et.textPrimary)),
+          const Spacer(),
+          IconButton(
+            onPressed: () => setState(() => _showSearch = !_showSearch),
+            icon: const Icon(Icons.search, size: 23, color: Et.textPrimary),
+            tooltip: '搜索',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mobileSearch() {
+    final h = _matched;
+    final exact = h.length == 1 ? h.first : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      child: Container(
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(21),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.search, size: 19, color: Et.textSecondary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _search,
+                autofocus: true,
+                style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+                onSubmitted: (_) => exact == null ? null : _connect(exact),
+                decoration: const InputDecoration(
+                  hintText: '查找主机…',
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+              ),
+            ),
+            InkWell(
+              onTap: () {
+                _search.clear();
+                setState(() => _showSearch = false);
+              },
+              child: const Icon(Icons.close, size: 18, color: Et.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileList(
+      {required List<GroupView> groups, required List<HostView> hosts}) {
+    if (widget.app.loading && hosts.isEmpty && groups.isEmpty) {
+      return const _CenterNote('同步中…');
+    }
+    if (hosts.isEmpty && groups.isEmpty) {
+      return const _CenterNote('还没有主机，点右下角 + 添加');
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+      children: [
+        if (_groupFilter == null && groups.isNotEmpty) ...[
+          const _SectionTitle('分组'),
+          for (final grp in groups)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _MobileTile(
+                iconColor: Et.tileGroup,
+                icon: Icons.grid_view_rounded,
+                title: grp.label,
+                subtitle: grp.count == 0 ? '无主机' : '${grp.count} 台主机',
+                onTap: () => setState(() => _groupFilter = grp.id),
+              ),
+            ),
+        ],
+        _SectionTitle(_groupFilter == null ? '主机' : '分组主机'),
+        for (final host in hosts)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _MobileTile(
+              iconColor: Et.tileHost,
+              icon: Icons.dns_rounded,
+              title: host.label,
+              subtitle: [
+                'ssh',
+                if (host.username.isNotEmpty) host.username,
+                if (widget.app.groupName(host.groupId) != null)
+                  widget.app.groupName(host.groupId)!,
+                if (!widget.app.credentialFor(host).available) '无凭据',
+              ].join(', '),
+              danger: !widget.app.credentialFor(host).available,
+              open: widget.openHostIds.contains(host.id),
+              onTap: () => _connect(host),
+              onMenu: (tl, size) => _cardMenu(host, tl, size),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _accountMenu(BuildContext context) {
+    showMenu<String>(
+      context: context,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: const RelativeRect.fromLTRB(12, 52, 240, 0),
+      items: [
+        PopupMenuItem(
+            enabled: false,
+            child: Text('已登录：${widget.mobileUsername}',
+                style: const TextStyle(fontSize: 13.5))),
+        const PopupMenuItem(
+            value: 'logout',
+            height: 40,
+            child: Text('退出登录',
+                style: TextStyle(fontSize: 13.5, color: Et.textPrimary))),
+      ],
+    ).then((v) {
+      if (v == 'logout') widget.onLogout?.call();
+    });
   }
 
   Widget _viewToggle(IconData icon, bool active) => IconButton(
@@ -582,6 +805,115 @@ class _Card extends StatelessWidget {
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// 手机列表卡（Termius 式）：大圆角白卡 + 48px 图标瓦片 + 名称/副标题。
+/// 点击主操作（连接/进入分组），长按/⋯ 弹菜单。
+class _MobileTile extends StatelessWidget {
+  const _MobileTile({
+    required this.iconColor,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.onMenu,
+    this.danger = false,
+    this.open = false,
+  });
+
+  final Color iconColor;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final void Function(Offset anchorTopLeft, Size anchorSize)? onMenu;
+  final bool danger; // 无凭据橙色副标题
+  final bool open; // 已开终端绿点
+
+  void _menuAt(BuildContext buttonContext) {
+    final box = buttonContext.findRenderObject()! as RenderBox;
+    onMenu?.call(box.localToGlobal(Offset.zero), box.size);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onMenu == null ? null : () => _menuAt(context),
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: iconColor,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: Colors.white, size: 25),
+                  ),
+                  if (open)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2DA44E),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                            color: Et.textPrimary)),
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: danger
+                                ? const Color(0xFFC77B27)
+                                : Et.textSecondary)),
+                  ],
+                ),
+              ),
+              if (onMenu != null)
+                IconButton(
+                  icon: const Icon(Icons.more_horiz,
+                      size: 19, color: Et.textSecondary),
+                  tooltip: '操作',
+                  onPressed: () => _menuAt(context),
+                ),
+            ],
+          ),
         ),
       ),
     );

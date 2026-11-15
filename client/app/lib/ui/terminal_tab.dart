@@ -146,10 +146,25 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     SystemChannels.textInput.invokeMethod('TextInput.show');
   }
 
+  /// 键条 paste：剪贴板文本直写会话（不经终端输入法）。
+  Future<void> _pasteClipboard() async {
+    final text = await Clipboard.getData('text/plain');
+    final t = text?.text;
+    final id = _sessionId;
+    if (t != null && t.isNotEmpty && id != null && _phase == _TermPhase.live) {
+      ssh.sshWrite(id: id, data: Uint8List.fromList(utf8.encode(t)));
+    }
+    _showKeyboard();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isTouch = Platform.isAndroid || Platform.isIOS;
     return Container(
+      color: Et.titleBar, // 状态栏区与标题栏同色，视觉连续
+      child: SafeArea(
+        bottom: false,
+        child: Container(
       color: Et.termBg,
       padding: const EdgeInsets.fromLTRB(8, 6, 0, 0),
       child: Column(
@@ -222,48 +237,67 @@ class _TerminalTabViewState extends State<TerminalTabView> {
               onSeq: _sendSeq,
               onToggleCtrl: () => setState(() => _ctrlArmed = !_ctrlArmed),
               onKeyboard: _showKeyboard,
+              onPaste: _pasteClipboard,
             ),
         ],
+      ),
+        ),
       ),
     );
   }
 }
 
-/// 移动端辅助键条：ESC / Ctrl（粘滞）/ Tab / 方向键 / 软键盘。
-/// 与 Termius 的 extra keys 对齐；桌面端不显示（有物理键盘）。
+/// 移动端辅助键条（Termius extra keys 风格）：横向滚动、无边框淡底。
+/// 键序对齐参考稿：tab / ctrl（粘滞）/ ↑ ↓ ← → / ESC / : / paste / * / =
+/// 桌面端不显示（有物理键盘）。
 class _ExtraKeysBar extends StatelessWidget {
   const _ExtraKeysBar({
     required this.ctrlArmed,
     required this.onSeq,
     required this.onToggleCtrl,
     required this.onKeyboard,
+    required this.onPaste,
   });
 
   final bool ctrlArmed;
   final void Function(String seq) onSeq;
   final VoidCallback onToggleCtrl;
   final VoidCallback onKeyboard;
+  final VoidCallback onPaste;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 46,
-      margin: const EdgeInsets.only(top: 4),
+      height: 44,
       decoration: const BoxDecoration(
-        color: Color(0xFFF6F7F9),
+        color: Et.mBg,
         border: Border(top: BorderSide(color: Et.cardBorder)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Row(
         children: [
-          _key('ESC', onTap: () => onSeq('\x1b')),
-          _key('Ctrl', onTap: onToggleCtrl, active: ctrlArmed),
-          _key('Tab', onTap: () => onSeq('\t')),
-          const Spacer(),
-          _keyIcon(Icons.keyboard_arrow_up, () => onSeq('\x1b[A')),
-          _keyIcon(Icons.keyboard_arrow_down, () => onSeq('\x1b[B')),
-          _keyIcon(Icons.keyboard_arrow_left, () => onSeq('\x1b[D')),
-          _keyIcon(Icons.keyboard_arrow_right, () => onSeq('\x1b[C')),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                children: [
+                  _key('tab', onTap: () => onSeq('\t')),
+                  _key('ctrl', onTap: onToggleCtrl, active: ctrlArmed),
+                  _key('↑', onTap: () => onSeq('\x1b[A'), fontSize: 15),
+                  _key('↓', onTap: () => onSeq('\x1b[B'), fontSize: 15),
+                  _key('←', onTap: () => onSeq('\x1b[D'), fontSize: 15),
+                  _key('→', onTap: () => onSeq('\x1b[C'), fontSize: 15),
+                  _key('esc', onTap: () => onSeq('\x1b')),
+                  _key(':', onTap: () => onSeq(':')),
+                  _key('paste', onTap: onPaste),
+                  _key('*', onTap: () => onSeq('*')),
+                  _key('=', onTap: () => onSeq('=')),
+                  _key('-', onTap: () => onSeq('-')),
+                  _key('/', onTap: () => onSeq('/')),
+                ],
+              ),
+            ),
+          ),
           IconButton(
             onPressed: onKeyboard,
             icon: const Icon(Icons.keyboard, size: 20),
@@ -275,41 +309,23 @@ class _ExtraKeysBar extends StatelessWidget {
     );
   }
 
-  Widget _key(String label, {required VoidCallback onTap, bool active = false}) =>
+  Widget _key(String label,
+          {required VoidCallback onTap, bool active = false, double fontSize = 13}) =>
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
-        child: Material(
-          color: active ? Et.tileGroup : Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: active ? Et.tileGroup : Et.cardBorder),
-              ),
-              child: Text(label,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: active ? Colors.white : Et.textPrimary,
-                  )),
-            ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            alignment: Alignment.center,
+            child: Text(label,
+                style: TextStyle(
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Et.tileGroup : Et.textPrimary,
+                )),
           ),
-        ),
-      );
-
-  Widget _keyIcon(IconData icon, VoidCallback onTap) => SizedBox(
-        width: 38,
-        child: IconButton(
-          onPressed: onTap,
-          icon: Icon(icon, size: 20),
-          color: Et.textPrimary,
-          tooltip: null,
         ),
       );
 }
