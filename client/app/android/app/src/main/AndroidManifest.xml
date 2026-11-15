@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 数据面：本地网络直连目标服务器（SSH 22 等）；控制面：中枢 HTTPS/WSS -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="eterm"
         android:name="${applicationName}"
