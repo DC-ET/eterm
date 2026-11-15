@@ -56,6 +56,26 @@ pub fn store_cursor() -> Result<u64, String> {
     store::cursor().map_err(|e| e.to_string())
 }
 
+// ---------- 本地事件日志（Logs 页） ----------
+
+/// 记录本设备事件（连接/主机/密钥动作；非敏感，不存凭据）。
+#[flutter_rust_bridge::frb(sync)]
+pub fn log_event(kind: String, detail: String) -> Result<(), String> {
+    store::log_event(&kind, &detail).map_err(|e| e.to_string())
+}
+
+/// 事件列表（新→旧）。
+#[flutter_rust_bridge::frb(sync)]
+pub fn events_list() -> Result<Vec<store::EventRow>, String> {
+    store::events_list().map_err(|e| e.to_string())
+}
+
+/// 清空事件。
+#[flutter_rust_bridge::frb(sync)]
+pub fn events_clear() -> Result<(), String> {
+    store::events_clear().map_err(|e| e.to_string())
+}
+
 /// 通用 kv 写（非敏感项；token 走 save_session）。
 #[flutter_rust_bridge::frb(sync)]
 pub fn kv_put(key: String, value: String) -> Result<(), String> {

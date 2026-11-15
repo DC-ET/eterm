@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/api/ssh.dart' as ssh;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -125,6 +126,9 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     }
     void fail(String reason) {
       _pushBytes(utf8.encode('\r\n\x1b[31m[错误] $reason\x1b[0m\r\n'));
+      try {
+        local.logEvent(kind: 'connect_fail', detail: '${h.label}（$h.hostname）: $reason');
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _phase = _TermPhase.closed;
@@ -149,11 +153,19 @@ class _TerminalTabViewState extends State<TerminalTabView> {
           case ssh.SshEvent_Data():
             if (_phase == _TermPhase.connecting && mounted) {
               setState(() => _phase = _TermPhase.live);
+              try {
+                local.logEvent(kind: 'connect_ok', detail: '${widget.host.label}（${widget.host.hostname}）');
+              } catch (_) {}
             }
             _pushBytes(ev.bytes);
           case ssh.SshEvent_Closed():
             _pushBytes(
                 utf8.encode('\r\n\x1b[31m[连接关闭] ${ev.reason}\x1b[0m\r\n'));
+            try {
+              local.logEvent(
+                  kind: 'disconnect',
+                  detail: '${widget.host.label}（${widget.host.hostname}）: ${ev.reason}');
+            } catch (_) {}
             if (mounted) {
               setState(() {
                 _phase = _TermPhase.closed;

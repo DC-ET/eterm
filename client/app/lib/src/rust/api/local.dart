@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import '../store.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -35,6 +36,16 @@ String storeLoad() => RustLib.instance.api.crateApiLocalStoreLoad();
 
 /// 当前同步游标。
 BigInt storeCursor() => RustLib.instance.api.crateApiLocalStoreCursor();
+
+/// 记录本设备事件（连接/主机/密钥动作；非敏感，不存凭据）。
+void logEvent({required String kind, required String detail}) =>
+    RustLib.instance.api.crateApiLocalLogEvent(kind: kind, detail: detail);
+
+/// 事件列表（新→旧）。
+List<EventRow> eventsList() => RustLib.instance.api.crateApiLocalEventsList();
+
+/// 清空事件。
+void eventsClear() => RustLib.instance.api.crateApiLocalEventsClear();
 
 /// 通用 kv 写（非敏感项；token 走 save_session）。
 void kvPut({required String key, required String value}) =>

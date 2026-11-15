@@ -38,6 +38,12 @@ pub fn open(db_path: &str) -> Result<(), StoreError> {
              k TEXT PRIMARY KEY,
              v TEXT NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS events (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             ts TEXT NOT NULL,
+             kind TEXT NOT NULL,
+             detail TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS known_hosts (
              host_key    TEXT PRIMARY KEY, -- host:port
              fingerprint TEXT NOT NULL,    -- SHA256:base64(nopad)（OpenSSH 现代格式）
@@ -287,6 +293,85 @@ pub fn known_host_put(
 pub fn known_host_remove(host_key: &str) -> Result<(), StoreError> {
     with_db(|c| {
         c.execute("DELETE FROM known_hosts WHERE host_key = ?1", [host_key])?;
+        Ok(())
+    })
+}
+
+// ---------- 本地事件日志（Logs 页；连接/主机/密钥动作，设备级） ----------
+
+/// RFC3339 UTC（展示用途）。
+pub fn super_utc_now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let mut y = 1970i64;
+    let mut d = days as i64;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let yl = if leap { 366 } else { 365 };
+        if d < yl { break; }
+        d -= yl;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let ml = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 1;
+    while d >= ml[(mo - 1) as usize] { d -= ml[(mo - 1) as usize]; mo += 1; }
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+/// 一条本地事件（时间倒序展示）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EventRow {
+    pub id: i64,
+    pub ts: String,
+    pub kind: String,  // connect_ok | connect_fail | disconnect | host_add | host_edit | host_delete | key_delete
+    pub detail: String,
+}
+
+/// 追加事件（非敏感：只存主机名与动作，不存凭据）。
+pub fn log_event(kind: &str, detail: &str) -> Result<(), StoreError> {
+    let ts = super_utc_now_rfc3339();
+    with_db(|c| {
+        c.execute(
+            "INSERT INTO events (ts, kind, detail) VALUES (?1, ?2, ?3)",
+            rusqlite::params![ts, kind, detail],
+        )?;
+        // 上限 500 条：超出删最旧
+        c.execute(
+            "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 500)",
+            [],
+        )?;
+        Ok(())
+    })
+}
+
+/// 事件列表（新→旧，最多 500）。
+pub fn events_list() -> Result<Vec<EventRow>, StoreError> {
+    with_db(|c| {
+        let mut stmt = c.prepare("SELECT id, ts, kind, detail FROM events ORDER BY id DESC")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(EventRow {
+                    id: r.get(0)?,
+                    ts: r.get(1)?,
+                    kind: r.get(2)?,
+                    detail: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    })
+}
+
+/// 清空事件。
+pub fn events_clear() -> Result<(), StoreError> {
+    with_db(|c| {
+        c.execute("DELETE FROM events", [])?;
         Ok(())
     })
 }

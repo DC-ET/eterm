@@ -14,6 +14,7 @@ import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'hosts_page.dart';
 import 'keychain_page.dart';
+import 'logs_page.dart';
 import 'known_hosts_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
@@ -132,7 +133,7 @@ class _ShellPageState extends State<ShellPage> {
       2 => const PlaceholderPage(title: 'Port Forwarding', note: '端口转发管理随 M2 落地'),
       3 => const PlaceholderPage(title: 'Snippets', note: '代码片段随 M3 落地'),
       4 => const KnownHostsPage(),
-      _ => const PlaceholderPage(title: 'Logs', note: '会话/审计日志随 M1 落地'),
+      _ => const LogsPage(),
     };
     // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
     final vaultView = compact

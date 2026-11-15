@@ -114,7 +114,11 @@ fn chrono_now_rfc3339() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = now.as_secs();
+    rfc3339_from_unix(now.as_secs())
+}
+
+/// Unix 秒 → RFC3339 UTC（纯计算，独立成函数便于单测）。
+fn rfc3339_from_unix(secs: u64) -> String {
     // 简易 UTC 转换（y*365.25 近似足够展示用途）
     let days = secs / 86_400;
     let rem = secs % 86_400;
@@ -133,6 +137,31 @@ fn chrono_now_rfc3339() -> String {
     let mut mo = 1;
     while d >= ml[(mo - 1) as usize] { d -= ml[(mo - 1) as usize]; mo += 1; }
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rfc3339_from_unix;
+
+    /// BUG-R1（docs/code-review/2026-11-15-逻辑bug评审.md）：
+    /// day-of-year 为 0 基却被直接当作"几号"输出 → first_seen 日期恒比真实早一天，
+    /// 且 epoch 当天会输出非法日期 1970-01-00。修复后应删除 #[should_panic]。
+    #[test]
+    #[should_panic(expected = "BUG-R1")]
+    fn bug_r1_first_seen_date_off_by_one() {
+        // 1970-01-01T23:59:59Z（epoch 后第 1 天）
+        let s = rfc3339_from_unix(86_399);
+        assert!(
+            s.starts_with("1970-01-01T"),
+            "BUG-R1: first_seen 日期差一天：期望 1970-01-01T23:59:59Z，实际 {s}"
+        );
+        // 2026-11-15T00:00:00Z
+        let s2 = rfc3339_from_unix(1_794_700_800);
+        assert!(
+            s2.starts_with("2026-11-15T"),
+            "BUG-R1: first_seen 日期差一天：期望 2026-11-15T00:00:00Z，实际 {s2}"
+        );
+    }
 }
 
 // ---------- FFI 面 ----------

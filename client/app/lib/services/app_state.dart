@@ -217,6 +217,9 @@ class AppState extends ChangeNotifier {
     if (bad.isNotEmpty) {
       throw ApiException(200, '删除被拒: ${bad.map((r) => r['status']).join(",")}');
     }
+    try {
+      local.logEvent(kind: 'key_delete', detail: k.label);
+    } catch (_) {}
     await refresh();
   }
 
@@ -312,6 +315,9 @@ class AppState extends ChangeNotifier {
     if (bad.isNotEmpty) {
       throw ApiException(200, '推送被拒: ${bad.map((r) => r['status']).join(",")}');
     }
+    try {
+      local.logEvent(kind: 'host_add', detail: '$label（$hostname）');
+    } catch (_) {}
     await refresh();
   }
 
@@ -346,6 +352,9 @@ class AppState extends ChangeNotifier {
     if (bad.isNotEmpty) {
       throw ApiException(200, '删除被拒: ${bad.map((r) => r['status']).join(",")}');
     }
+    try {
+      local.logEvent(kind: 'host_delete', detail: h.label);
+    } catch (_) {}
     await refresh();
   }
 
@@ -456,6 +465,9 @@ class AppState extends ChangeNotifier {
     if (bad.isNotEmpty) {
       throw ApiException(200, '推送被拒: ${bad.map((r) => r['status']).join(",")}');
     }
+    try {
+      local.logEvent(kind: 'host_edit', detail: '$label（$hostname）');
+    } catch (_) {}
     await refresh();
   }
 

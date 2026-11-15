@@ -36,10 +36,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  EventRow dco_decode_event_row(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
   KnownHost dco_decode_known_host(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<EventRow> dco_decode_list_event_row(dynamic raw);
 
   @protected
   List<KnownHost> dco_decode_list_known_host(dynamic raw);
@@ -80,10 +89,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  EventRow sse_decode_event_row(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
   KnownHost sse_decode_known_host(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<EventRow> sse_decode_list_event_row(SseDeserializer deserializer);
 
   @protected
   List<KnownHost> sse_decode_list_known_host(SseDeserializer deserializer);
@@ -134,10 +152,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_event_row(EventRow self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_known_host(KnownHost self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_event_row(List<EventRow> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_known_host(

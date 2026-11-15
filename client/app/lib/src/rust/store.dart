@@ -7,6 +7,35 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+/// 一条本地事件（时间倒序展示）。
+class EventRow {
+  final PlatformInt64 id;
+  final String ts;
+  final String kind;
+  final String detail;
+
+  const EventRow({
+    required this.id,
+    required this.ts,
+    required this.kind,
+    required this.detail,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ ts.hashCode ^ kind.hashCode ^ detail.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EventRow &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          ts == other.ts &&
+          kind == other.kind &&
+          detail == other.detail;
+}
+
 /// 已信任主机键（Known Hosts 页与 SSH 校验共用）。
 class KnownHost {
   final String host;
