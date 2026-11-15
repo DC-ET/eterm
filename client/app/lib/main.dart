@@ -8,6 +8,7 @@ import 'dart:io' show Platform;
 
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/frb_generated.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 // 0.7.0 重写为 nativeapi；旧 API（windowManager/WindowOptions）在 legacy.dart
@@ -55,6 +56,22 @@ class EtermApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: Et.contentBg,
         fontFamilyFallback: const ['PingFang SC', 'Helvetica Neue'],
+        // 全局状态栏图标：浅色页面用深色图标（终端页由 AnnotatedRegion 覆盖为 light）
+        appBarTheme: const AppBarTheme(
+          systemOverlayStyle: SystemUiOverlayStyle(
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+          ),
+        ),
+        // 浮动圆角深色 SnackBar，与浅色主题协调
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Et.titleBar,
+          contentTextStyle: const TextStyle(
+              fontSize: 13.5, color: Et.titleBarText),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        ),
       ),
       home: const _Boot(),
     );

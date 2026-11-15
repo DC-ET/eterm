@@ -35,6 +35,16 @@ class TerminalTabView extends StatefulWidget {
 
 enum _TermPhase { connecting, live, closed }
 
+/// 终端等宽字体（各平台原生等宽族；xterm 默认字体在 Android 偏模糊）
+final _monoFont = Platform.isWindows
+    ? 'Consolas'
+    : Platform.isMacOS
+        ? 'Menlo'
+        : 'monospace';
+
+/// 键条按压触觉反馈
+void _haptic() => HapticFeedback.selectionClick();
+
 class _TerminalTabViewState extends State<TerminalTabView> {
   final _bytes = StreamController<List<int>>();
   final _focus = FocusNode();
@@ -179,7 +189,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                   theme: termLightTheme,
                   keyboardAppearance: Brightness.light,
                   padding: const EdgeInsets.only(left: 10, top: 8),
-                  textStyle: const TerminalStyle(fontSize: 13.5),
+                  textStyle: TerminalStyle(
+                      fontSize: 13.5, fontFamily: _monoFont),
                 ),
                 if (_phase == _TermPhase.connecting)
                   const Positioned.fill(
@@ -314,7 +325,10 @@ class _ExtraKeysBar extends StatelessWidget {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
         child: InkWell(
-          onTap: onTap,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
           borderRadius: BorderRadius.circular(8),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 6),

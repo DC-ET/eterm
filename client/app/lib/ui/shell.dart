@@ -5,6 +5,8 @@
 
 import 'dart:io' show Platform;
 
+import 'package:flutter/services.dart';
+
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
 import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea
@@ -137,19 +139,24 @@ class _ShellPageState extends State<ShellPage> {
     final vaultView = compact
         ? Column(
             children: [
-              Expanded(child: content),
-              NavigationBar(
-                selectedIndex: _compactNavIndex(navIndex),
-                onDestinationSelected: (i) =>
-                    setState(() => navIndex = _compactNavTarget[i]),
-                height: 62,
-                backgroundColor: Et.mBg,
-                indicatorColor: Et.mSelected,
-                destinations: [
-                  for (final (icon, label) in _compactNav)
-                    NavigationDestination(
-                        icon: Icon(icon, size: 21), label: label),
-                ],
+              Expanded(
+                child: SafeArea(bottom: false, child: content), // 状态栏统一避让
+              ),
+              SafeArea(
+                top: false, // 手势条避让
+                child: NavigationBar(
+                  selectedIndex: _compactNavIndex(navIndex),
+                  onDestinationSelected: (i) =>
+                      setState(() => navIndex = _compactNavTarget[i]),
+                  height: 62,
+                  backgroundColor: Et.mBg,
+                  indicatorColor: Et.mSelected,
+                  destinations: [
+                    for (final (icon, label) in _compactNav)
+                      NavigationDestination(
+                          icon: Icon(icon, size: 21), label: label),
+                  ],
+                ),
               ),
             ],
           )
@@ -203,7 +210,16 @@ class _ShellPageState extends State<ShellPage> {
     );
     // 手机终端页：深色标题栏隐藏（标签条吸底接管），其余视图保留账号入口
     final showTitleBar = !compact || activeTab == -1;
-    return Scaffold(
+    return PopScope<Object?>(
+      canPop: activeTab == -1,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && activeTab >= 0) setState(() => activeTab = -1);
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+      value: compact && activeTab >= 0
+          ? SystemUiOverlayStyle.light // 终端顶部深色区
+          : SystemUiOverlayStyle.dark,
+      child: Scaffold(
       backgroundColor: Et.contentBg,
       body: Column(
         children: [
@@ -222,6 +238,8 @@ class _ShellPageState extends State<ShellPage> {
             const LinearProgressIndicator(minHeight: 2, color: Et.accent),
           Expanded(child: body),
         ],
+      ),
+      ),
       ),
     );
   }
@@ -264,8 +282,13 @@ class _MobileTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 手势条避让：键盘弹出时归零（标签条贴键盘，不留空隙）
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom > 0
+        ? 0.0
+        : MediaQuery.paddingOf(context).bottom;
     return Container(
-      height: 52,
+      height: 52 + bottomInset,
+      padding: EdgeInsets.only(bottom: bottomInset),
       color: Et.mBg,
       child: Row(
         children: [
@@ -379,15 +402,24 @@ class _TitleBar extends StatelessWidget {
             SizedBox(width: compact ? (Platform.isAndroid || Platform.isIOS ? 10 : 66) : 78),
             _VaultPill(username: username, onLogout: onLogout, onSelectVault: onSelectVault),
             const SizedBox(width: 10),
-            for (var i = 0; i < tabs.length; i++)
-              _TermTabPill(
-                label: tabs[i].host.label,
-                active: activeTab == i,
-                onTap: () => onSelectTab(i),
-                onClose: () => onCloseTab(i),
-                maxLabelWidth: compact ? 84 : 160,
+            // 标签区：多了横向滚动，不挤溢通知钮
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < tabs.length; i++)
+                      _TermTabPill(
+                        label: tabs[i].host.label,
+                        active: activeTab == i,
+                        onTap: () => onSelectTab(i),
+                        onClose: () => onCloseTab(i),
+                        maxLabelWidth: compact ? 84 : 160,
+                      ),
+                  ],
+                ),
               ),
-            const Spacer(),
+            ),
             IconButton(
               icon: const Icon(Icons.notifications_none,
                   color: Color(0xFF9AA1B0), size: 20),

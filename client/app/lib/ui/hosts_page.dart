@@ -325,19 +325,16 @@ class _HostsPageState extends State<HostsPage> {
       color: Et.mBg,
       child: Stack(
         children: [
-          SafeArea(
-            bottom: false,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _mobileAppBar(context),
-                if (_showSearch) _mobileSearch(),
-                if (widget.app.loading)
-                  const LinearProgressIndicator(
-                      minHeight: 2, color: Et.accent),
-                Expanded(child: content),
-              ],
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _mobileAppBar(context),
+              if (_showSearch) _mobileSearch(),
+              if (widget.app.loading)
+                const LinearProgressIndicator(
+                    minHeight: 2, color: Et.accent),
+              Expanded(child: content),
+            ],
           ),
           // FAB：新建主机
           Positioned(
@@ -455,7 +452,32 @@ class _HostsPageState extends State<HostsPage> {
       return const _CenterNote('同步中…');
     }
     if (hosts.isEmpty && groups.isEmpty) {
-      return const _CenterNote('还没有主机，点右下角 + 添加');
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.dns_outlined,
+                  size: 30, color: Et.textSecondary),
+            ),
+            const SizedBox(height: 14),
+            const Text('还没有主机',
+                style: TextStyle(
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
+                    color: Et.textPrimary)),
+            const SizedBox(height: 5),
+            const Text('添加你的第一台服务器开始使用',
+                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+          ],
+        ),
+      );
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
@@ -534,7 +556,31 @@ class _HostsPageState extends State<HostsPage> {
       return const _CenterNote('同步中…');
     }
     if (hosts.isEmpty && groups.isEmpty) {
-      return const _CenterNote('还没有主机，点「新建主机」添加');
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('还没有主机',
+                style: TextStyle(
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
+                    color: Et.textPrimary)),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _addHost,
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('新建主机'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9)),
+                minimumSize: const Size(0, 38),
+              ),
+            ),
+          ],
+        ),
+      );
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 20),
@@ -931,16 +977,31 @@ class PlaceholderPage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.construction, size: 40, color: Colors.grey.shade400),
-            const SizedBox(height: 12),
+            Container(
+              width: 68,
+              height: 68,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Et.cardBorder),
+              ),
+              child: Icon(Icons.construction,
+                  size: 30, color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 16),
             Text(title,
                 style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w700,
                     color: Et.textPrimary)),
             const SizedBox(height: 6),
-            Text(note,
-                style: const TextStyle(fontSize: 13, color: Et.textSecondary)),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 280),
+              child: Text(note,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 13, height: 1.5, color: Et.textSecondary)),
+            ),
           ],
         ),
       );
