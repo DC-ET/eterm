@@ -174,37 +174,32 @@ class _ShellPageState extends State<ShellPage> {
       index: activeTab + 1,
       children: [
         vaultView,
-        // 手机：终端标签条吸底（Termius 式 ←/标签/+），终端满幅无深色标题栏
+        // 终端 child 结构对 compact 恒定（Column + Expanded）：
+        // 旋转/分屏跨断点时仅属性变化，State 复用 → SSH 会话不断（P1-6）
         for (final t in tabs)
-          compact
-              ? Column(
-                  children: [
-                    Expanded(
-                      child: TerminalTabView(
-                        key: t.key,
-                        host: t.host,
-                        terminal: t.terminal,
-                        authKind: t.authKind,
-                        secret: t.secret,
-                      ),
-                    ),
-                    _MobileTabBar(
-                      tabs: tabs,
-                      activeTab: activeTab,
-                      onSelectVault: () => setState(() => activeTab = -1),
-                      onSelectTab: (i) => setState(() => activeTab = i),
-                      onCloseTab: closeTab,
-                      onAdd: () => setState(() => activeTab = -1),
-                    ),
-                  ],
-                )
-              : TerminalTabView(
+          Column(
+            children: [
+              Expanded(
+                child: TerminalTabView(
                   key: t.key,
                   host: t.host,
                   terminal: t.terminal,
                   authKind: t.authKind,
                   secret: t.secret,
                 ),
+              ),
+              // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
+              if (compact)
+                _MobileTabBar(
+                  tabs: tabs,
+                  activeTab: activeTab,
+                  onSelectVault: () => setState(() => activeTab = -1),
+                  onSelectTab: (i) => setState(() => activeTab = i),
+                  onCloseTab: closeTab,
+                  onAdd: () => setState(() => activeTab = -1),
+                ),
+            ],
+          ),
       ],
     );
     // 顶部结构（Android 状态栏避让的正确层级）：

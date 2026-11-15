@@ -167,8 +167,13 @@ class _AddHostDialogState extends State<AddHostDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        initialValue:
-                            _newGroupMode ? '__new__' : (_groupId ?? ''),
+                        // 悬空 groupId（分组在其他设备被删）回退"未分组"，防断言崩溃
+                        initialValue: _newGroupMode
+                            ? '__new__'
+                            : (_groupId != null &&
+                                    groups.any((g) => g.id == _groupId)
+                                ? _groupId!
+                                : ''),
                         decoration: _dec('分组'),
                         items: [
                           const DropdownMenuItem(

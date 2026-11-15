@@ -117,8 +117,15 @@ class _LoginPageState extends State<LoginPage> {
                         TextStyle(fontSize: 13, color: Et.textSecondary)),
                 const SizedBox(height: 26),
                 _field(_server, '服务器地址',
-                    validator: (v) =>
-                        (v == null || !v.startsWith('http')) ? '需以 http(s):// 开头' : null),
+                    validator: (v) {
+                      final parsed = Uri.tryParse(v?.trim() ?? '');
+                      if (parsed == null ||
+                          parsed.scheme != 'https' ||
+                          parsed.host.isEmpty) {
+                        return '需 https:// 开头的有效服务器地址（明文 http 不安全）';
+                      }
+                      return null;
+                    }),
                 const SizedBox(height: 14),
                 _field(_username, '用户名'),
                 const SizedBox(height: 14),
