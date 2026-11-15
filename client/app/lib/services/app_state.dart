@@ -315,11 +315,13 @@ class AppState extends ChangeNotifier {
       }));
     }
 
+    // 编辑模式必须显式发送 group_id（含 null=移出分组）：`?null` 会省略键，
+    // 服务端 push 是部分更新语义，缺键不改列 → 移出分组静默失败
     changes.add(_update('host', host.id, {
       'label': label,
       'hostname': hostname,
       'tags': _entities['host/${host.id}']?['tags'] ?? <String>[],
-      'group_id': ?effectiveGroupId,
+      'group_id': effectiveGroupId,
     }));
 
     if (isPasswordAuth) {

@@ -84,6 +84,11 @@ pub fn ssh_connect(
     rows: u32,
 ) -> Result<u64, String> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    // 回收已结束的会话（ended 后事件留在 backlog 供补发；此前未订阅的失败
+    // 会话在此处统一清理，避免无界累积）
+    if let Some(m) = SESSIONS.lock().unwrap().as_mut() {
+        m.retain(|_, s| !s.inner.lock().unwrap().ended);
+    }
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<Cmd>(64);
     let (ev_tx, _) = tokio::sync::broadcast::channel::<SshEvent>(1024);
     let session = Arc::new(Session {
@@ -102,8 +107,8 @@ pub fn ssh_connect(
         let mut inner = session.inner.lock().unwrap();
         inner.ended = true;
         inner.ev_tx = None; // 断开广播发送端：events() 的 recv 得 Closed → 流关闭
-        inner.backlog.clear();
-        if let Some(m) = SESSIONS.lock().unwrap().as_mut() { m.remove(&id); }
+        // backlog 保留（含 Closed）：若 Dart 在会话结束后才订阅（快速失败场景），
+        // ssh_events 会补发积压后收尾。注册表清理延迟到下次 ssh_connect 统一回收。
     });
     Ok(id)
 }
@@ -122,7 +127,15 @@ pub fn ssh_events(id: u64, sink: StreamSink<SshEvent>) -> Result<(), String> {
             .ok_or_else(|| "会话不存在".to_string())?;
         let mut inner = s.inner.lock().unwrap();
         if inner.ended {
-            return Err("会话已结束".to_string());
+            // 会话已结束（如快速失败）：补发积压事件（含 Closed）后自然收尾，
+            // 让 Dart 侧拿到真实失败原因而非"会话已结束"
+            let backlog: Vec<SshEvent> = inner.backlog.drain(..).collect();
+            drop(inner);
+            drop(s);
+            for ev in backlog {
+                let _ = sink.add(ev);
+            }
+            return Ok(());
         }
         let rx = inner
             .ev_tx

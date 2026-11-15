@@ -88,6 +88,7 @@ class _Boot extends StatefulWidget {
 
 class _BootState extends State<_Boot> {
   String? _note;
+  bool _fatal = false; // 本地库初始化失败：不可恢复，需用户重试
 
   @override
   void initState() {
@@ -100,14 +101,22 @@ class _BootState extends State<_Boot> {
       final dir = await getApplicationSupportDirectory();
       local.initCore(dataDir: dir.path);
     } catch (e) {
-      setState(() => _note = '本地库初始化失败: $e');
+      // DB 不可用时恢复链必然级联失败（restore/clear 都要开库）——终止并给出重试
+      if (!mounted) return;
+      setState(() {
+        _fatal = true;
+        _note = '本地库初始化失败: $e';
+      });
+      return;
     }
     if (!mounted) return;
     List<String> sess;
     try {
-      sess = local.restoreSession(); // [server, token, username]
+      sess = local.restoreSession(); // [server, token]
     } catch (_) {
-      local.clearLocal(); // 本地密文损坏（如密钥更替）：弃本地快照重新登录
+      try {
+        local.clearLocal(); // 本地密文损坏（如密钥更替）：弃本地快照重新登录
+      } catch (_) {}
       sess = const [];
     }
     if (sess.length < 2) {

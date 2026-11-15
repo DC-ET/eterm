@@ -48,6 +48,7 @@ void _haptic() => HapticFeedback.selectionClick();
 class _TerminalTabViewState extends State<TerminalTabView> {
   final _bytes = StreamController<List<int>>();
   final _focus = FocusNode();
+  StreamSubscription<ssh.SshEvent>? _sub;
   BigInt? _sessionId;
   _TermPhase _phase = _TermPhase.connecting;
   String? _reason;
@@ -71,11 +72,21 @@ class _TerminalTabViewState extends State<TerminalTabView> {
 
   @override
   void dispose() {
+    _sub?.cancel(); // 先断事件流：Closed 事件不得在 dispose 后抵达
     final id = _sessionId;
-    if (id != null && _phase != _TermPhase.closed) ssh.sshClose(id: id);
+    if (id != null && _phase != _TermPhase.closed) {
+      try {
+        ssh.sshClose(id: id);
+      } catch (_) {} // 会话可能已被远端关闭并从注册表移除（close 幂等防御）
+    }
     _bytes.close();
     _focus.dispose();
     super.dispose();
+  }
+
+  /// 输出通道：dispose 后（_bytes 已 close）静默丢弃，杜绝 StateError。
+  void _pushBytes(List<int> bytes) {
+    if (!_bytes.isClosed) _bytes.add(bytes);
   }
 
   /// 软键盘输出的字符 → 会话。Ctrl 粘滞时把可组合字符折叠成控制码
@@ -99,16 +110,32 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   void _sendSeq(String seq) {
     final id = _sessionId;
     if (id == null || _phase != _TermPhase.live) return;
-    ssh.sshWrite(id: id, data: Uint8List.fromList(utf8.encode(seq)));
+    try {
+      ssh.sshWrite(id: id, data: Uint8List.fromList(utf8.encode(seq)));
+    } catch (_) {} // 会话消失瞬间（Closed 未送达）同步 FFI 异常防御
     _focus.requestFocus();
   }
 
   Future<void> _connect() async {
     final h = widget.host;
-    setState(() {
-      _phase = _TermPhase.connecting;
-      _reason = null;
-    });
+    _sub?.cancel(); // 重连：先断旧订阅
+    _sub = null;
+    if (mounted) {
+      setState(() {
+        _phase = _TermPhase.connecting;
+        _reason = null;
+      });
+    }
+    void fail(String reason) {
+      _pushBytes(utf8.encode('\r\n\x1b[31m[错误] $reason\x1b[0m\r\n'));
+      if (mounted) {
+        setState(() {
+          _phase = _TermPhase.closed;
+          _reason = reason;
+        });
+      }
+    }
+
     try {
       final id = ssh.sshConnect(
         host: h.hostname,
@@ -120,34 +147,32 @@ class _TerminalTabViewState extends State<TerminalTabView> {
         rows: 24,
       );
       _sessionId = id;
-      await for (final ev in ssh.sshEvents(id: id)) {
+      _sub = ssh.sshEvents(id: id).listen((ev) {
         switch (ev) {
           case ssh.SshEvent_Data():
-            if (_phase == _TermPhase.connecting) {
+            if (_phase == _TermPhase.connecting && mounted) {
               setState(() => _phase = _TermPhase.live);
             }
-            _bytes.add(ev.bytes);
+            _pushBytes(ev.bytes);
           case ssh.SshEvent_Closed():
-            _bytes
-                .add(utf8.encode('\r\n\x1b[31m[连接关闭] ${ev.reason}\x1b[0m\r\n'));
-            setState(() {
-              _phase = _TermPhase.closed;
-              _reason = ev.reason;
-            });
-            return;
+            _pushBytes(
+                utf8.encode('\r\n\x1b[31m[连接关闭] ${ev.reason}\x1b[0m\r\n'));
+            if (mounted) {
+              setState(() {
+                _phase = _TermPhase.closed;
+                _reason = ev.reason;
+              });
+            }
         }
-      }
-      // 流意外结束（无 Closed 事件）
-      setState(() {
-        _phase = _TermPhase.closed;
-        _reason = '会话流结束';
+      }, onError: (Object e) {
+        fail('FFI 错误: $e');
+      }, onDone: () {
+        // 流结束但未收到 Closed（理论上不应发生）；正常关闭时 Closed 先达，
+        // 此处已 closed，不得覆盖真实原因
+        if (_phase != _TermPhase.closed) fail('会话流结束');
       });
     } catch (e) {
-      _bytes.add(utf8.encode('\r\n\x1b[31m[错误] $e\x1b[0m\r\n'));
-      setState(() {
-        _phase = _TermPhase.closed;
-        _reason = 'FFI 错误: $e';
-      });
+      fail('FFI 错误: $e');
     }
   }
 

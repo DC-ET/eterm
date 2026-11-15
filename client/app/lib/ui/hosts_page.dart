@@ -285,9 +285,14 @@ class _HostsPageState extends State<HostsPage> {
               Expanded(
                 child: widget.app.error == 'unauthorized'
                     ? const SizedBox.shrink() // 壳层正在跳转登录页
-                    : widget.app.error != null
-                        ? _CenterNote('同步失败: ${widget.app.error}')
-                        : _grid(groups: g, hosts: h),
+                    : Column(
+                        children: [
+                          // 同步失败不打断本地快照展示（离线可见）
+                          if (widget.app.error != null)
+                            _errorBanner(widget.app.error!),
+                          Expanded(child: _grid(groups: g, hosts: h)),
+                        ],
+                      ),
               ),
             ],
           ),
@@ -315,9 +320,14 @@ class _HostsPageState extends State<HostsPage> {
         Expanded(
           child: widget.app.error == 'unauthorized'
               ? const SizedBox.shrink()
-              : widget.app.error != null
-                  ? _CenterNote('同步失败: ${widget.app.error}')
-                  : _mobileList(groups: groups, hosts: hosts),
+              : Column(
+                  children: [
+                    if (widget.app.error != null)
+                      _errorBanner(widget.app.error!),
+                    Expanded(
+                        child: _mobileList(groups: groups, hosts: hosts)),
+                  ],
+                ),
         ),
       ],
     );
@@ -518,6 +528,44 @@ class _HostsPageState extends State<HostsPage> {
             ),
           ),
       ],
+    );
+  }
+
+  /// 同步失败横幅：保留本地快照渲染，仅提示 + 重试
+  Widget _errorBanner(String message) {
+    const danger = Color(0xFFD1242F);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFCEDED),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off, size: 16, color: danger),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('同步失败，正在显示本地缓存 · $message',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: danger)),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () => widget.app.refresh(),
+            borderRadius: BorderRadius.circular(6),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: Text('重试',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: danger)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
