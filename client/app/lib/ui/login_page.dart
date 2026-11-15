@@ -1,6 +1,8 @@
 // 登录页（Termius 式浅色）：白卡片 + 橙色主按钮。
 // token 保存在内存（M0 重启需重登）；OS 钥匙串持久化随 M1 落地。
 
+import 'dart:io' show Platform;
+
 import 'package:material_ui/material_ui.dart';
 
 import 'package:eterm/src/rust/api/local.dart' as local;
@@ -46,7 +48,7 @@ class _LoginPageState extends State<LoginPage> {
       final result = await api.login(
         _username.text.trim(),
         _password.text,
-        deviceName: 'eterm-mac',
+        deviceName: Platform.isMacOS ? 'eterm-mac' : 'eterm-mobile',
       );
       if (!mounted) return;
       // 会话持久化：token 密文落本地库（LKMK 钥匙串保护），重启免登录

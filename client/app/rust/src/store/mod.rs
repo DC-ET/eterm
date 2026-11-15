@@ -43,11 +43,12 @@ pub fn open(db_path: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// 确保 LKMK 就绪（macOS 钥匙串取/建）。与 open() 分离：
+/// 确保 LKMK 就绪（macOS 钥匙串取/建；Android 沙箱文件兜底）。与 open() 分离：
 /// 单测不触钥匙串（security-framework 首次访问会弹 GUI 授权框，阻塞无头进程）。
-pub fn ensure_lkmk() -> Result<(), StoreError> {
+pub fn ensure_lkmk(data_dir: &str) -> Result<(), StoreError> {
     if LKMK.lock().unwrap().is_none() {
-        let key = crate::util::keystore::load_or_create_lkmk().map_err(StoreError::Other)?;
+        let key =
+            crate::util::keystore::load_or_create_lkmk(data_dir).map_err(StoreError::Other)?;
         *LKMK.lock().unwrap() = Some(key);
     }
     Ok(())

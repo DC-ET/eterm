@@ -4,6 +4,8 @@
 //   无会话/探活 401：登录页。
 // Rust 侧经 frb 提供 SSH 会话、字段加解密与本地库（crate rust_lib_eterm）。
 
+import 'dart:io' show Platform;
+
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/frb_generated.dart';
 import 'package:material_ui/material_ui.dart';
@@ -19,17 +21,20 @@ import 'ui/theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
-  await windowManager.ensureInitialized();
-  const opts = WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(960, 640),
-    titleBarStyle: TitleBarStyle.hidden, // macOS：交通灯保留、标题栏自绘
-    windowButtonVisibility: true,
-  );
-  await windowManager.waitUntilReadyToShow(opts, () async {
-    await windowManager.show();
-    await windowManager.focus();
-  });
+  // 窗口管理仅桌面端（window_manager 无 Android 实现，移动端跳过）
+  if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+    await windowManager.ensureInitialized();
+    const opts = WindowOptions(
+      size: Size(1280, 800),
+      minimumSize: Size(960, 640),
+      titleBarStyle: TitleBarStyle.hidden, // macOS：交通灯保留、标题栏自绘
+      windowButtonVisibility: true,
+    );
+    await windowManager.waitUntilReadyToShow(opts, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
   runApp(const EtermApp());
 }
 

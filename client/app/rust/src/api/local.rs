@@ -11,7 +11,7 @@ pub fn init_core(data_dir: String) -> Result<(), String> {
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let db_path = format!("{data_dir}/eterm.db");
     store::open(&db_path).map_err(|e| e.to_string())?;
-    store::ensure_lkmk().map_err(|e| e.to_string())
+    store::ensure_lkmk(&data_dir).map_err(|e| e.to_string())
 }
 
 /// 保存会话（token 以 LKMK 密文落盘）。

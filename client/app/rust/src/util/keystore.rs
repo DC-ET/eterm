@@ -1,9 +1,9 @@
 //! 本地主密钥（LKMK）存取：macOS 存钥匙串（generic password）；
-//! 其他平台 M1 返回错误（Android 走平台沙箱目录文件兜底，随 Android 客户端落地）。
-//! 首次调用生成 32 字节随机密钥并写入，后续原样读回。
+//! Android 走应用沙箱内文件兜底（OS 私有目录其他应用不可读；Keystore 硬件绑定
+//! 随移动端深入落地）。首次调用生成 32 字节随机密钥并写入，后续原样读回。
 
-/// 取（或首次生成）LKMK。
-pub fn load_or_create_lkmk() -> Result<Vec<u8>, String> {
+/// 取（或首次生成）LKMK。data_dir 供 Android 文件兜底使用（macOS 忽略）。
+pub fn load_or_create_lkmk(data_dir: &str) -> Result<Vec<u8>, String> {
     #[cfg(target_os = "macos")]
     {
         const SERVICE: &str = "eterm";
@@ -19,8 +19,24 @@ pub fn load_or_create_lkmk() -> Result<Vec<u8>, String> {
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "android")]
     {
-        Err("当前平台钥匙串存取未实现（Android 兜底随移动端落地）")
+        let path = std::path::Path::new(data_dir).join("lkmk.bin");
+        if path.exists() {
+            return std::fs::read(&path).map_err(|e| format!("读取 LKMK 失败: {e}"));
+        }
+        let key: [u8; 32] = rand::random();
+        std::fs::write(&path, key).map_err(|e| format!("写入 LKMK 失败: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(key.to_vec())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "android")))]
+    {
+        let _ = data_dir;
+        Err("当前平台 LKMK 存取未实现".to_string())
     }
 }
