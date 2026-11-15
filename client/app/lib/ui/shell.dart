@@ -11,6 +11,7 @@ import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea
 import 'package:xterm/xterm.dart';
 
 import '../services/api_client.dart';
+import '../services/realtime.dart';
 import '../services/app_state.dart';
 import 'hosts_page.dart';
 import 'keychain_page.dart';
@@ -74,6 +75,8 @@ class _ShellPageState extends State<ShellPage> {
       tabs.removeAt(i);
       if (tabs.isEmpty) {
         activeTab = -1;
+      } else if (i < activeTab) {
+        activeTab -= 1; // 评审 BUG-D2 回归：关闭左侧标签后仍查看同一会话
       } else if (activeTab >= tabs.length) {
         activeTab = tabs.length - 1;
       }
@@ -81,6 +84,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   Future<void> _logout() async {
+    realtime.stop();
     try {
       await widget.api.logout();
     } catch (_) {}
@@ -92,6 +96,7 @@ class _ShellPageState extends State<ShellPage> {
 
   /// token 失效（401）：静默回登录页。
   void _onAuthLost() {
+    realtime.stop();
     local.clearLocal();
     if (!mounted) return;
     Navigator.of(context)
@@ -244,14 +249,16 @@ class _ShellPageState extends State<ShellPage> {
 
 // ---------- 窄屏底部导航 ----------
 
-/// 手机底栏只收纳有实质功能的页（与侧栏 navIndex 对应：0/1/3/5）。
+/// 手机底栏收纳全部实页 + Snippets（M2 占位），与侧栏 navIndex 对应：0/1/4/3/5。
+/// 评审 BUG-D1 回归：Known Hosts（侧栏 4）必须有手机入口，否则 compact 布局不可达。
 const _compactNav = [
   (Icons.dns_outlined, 'Hosts'),
   (Icons.key_outlined, 'Keys'),
+  (Icons.fingerprint, 'Known Hosts'),
   (Icons.code, 'Snippets'),
   (Icons.history, 'Logs'),
 ];
-const _compactNavTarget = [0, 1, 3, 5];
+const _compactNavTarget = [0, 1, 4, 3, 5];
 
 int _compactNavIndex(int navIndex) {
   final i = _compactNavTarget.indexOf(navIndex);

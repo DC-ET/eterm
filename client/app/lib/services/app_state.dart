@@ -80,6 +80,13 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 仅供测试注入实体快照（绕过 Rust 本地库 FFI；评审验证用，见 docs/code-review）。
+  @visibleForTesting
+  void debugSetEntities(Map<String, Map<String, dynamic>> entities) {
+    _entities = entities;
+    notifyListeners();
+  }
+
   List<HostView> get hosts {
     final protocols = <String, Map<String, dynamic>>{}; // host_id → protocol
     for (final e in _entities.values) {

@@ -21,6 +21,7 @@ dependencies:
   # vendor fork 4.0.0-eterm.1：含 DEL 忽略 + 宽字符光标吸附两补丁（技术方案 §4.1）
   xterm:
     path: ../third_party/xterm
+  web_socket_channel: ^3.0.3
 
 # 镜像源曾把 foundation 解析到不存在的 1.9.1（无 macos 插件声明，导致注册表缺插件、
 # 桌面启动黑窗）。钉住已缓存的 2.6.0；镜像修复后可移除。

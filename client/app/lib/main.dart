@@ -15,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/legacy.dart';
 
 import 'services/api_client.dart';
+import 'services/realtime.dart';
 import 'services/app_state.dart';
 import 'ui/login_page.dart';
 import 'ui/shell.dart';
@@ -125,6 +126,7 @@ class _BootState extends State<_Boot> {
     }
     final api = ApiClient(baseUrl: sess[0])..token = sess[1];
     final app = AppState(api: api);
+    realtime.start(sess[0], sess[1], poke: app.refresh); // WS 实时同步
     await app.bootstrap(); // 本地快照（离线可见）
     var username = sess.length >= 3 && sess[2].isNotEmpty ? sess[2] : '';
     try {

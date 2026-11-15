@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:eterm/src/rust/api/local.dart' as local;
 
 import '../services/api_client.dart';
+import '../services/realtime.dart';
 import '../services/app_state.dart';
 import 'shell.dart';
 import 'theme.dart';
@@ -57,6 +58,7 @@ class _LoginPageState extends State<LoginPage> {
       local.saveSession(server: server, token: result.token);
       local.kvPut(key: 'username', value: result.username);
       final app = AppState(api: api);
+      realtime.start(server, result.token, poke: app.refresh); // WS 实时同步
       await app.bootstrap();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(

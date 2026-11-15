@@ -298,30 +298,11 @@ pub fn known_host_remove(host_key: &str) -> Result<(), StoreError> {
 }
 
 // ---------- 本地事件日志（Logs 页；连接/主机/密钥动作，设备级） ----------
+// 时间戳统一走 crate::util::rfc3339_from_unix（评审 BUG-R1：勿再复制日历换算）。
 
 /// RFC3339 UTC（展示用途）。
 pub fn super_utc_now_rfc3339() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let mut y = 1970i64;
-    let mut d = days as i64;
-    loop {
-        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let yl = if leap { 366 } else { 365 };
-        if d < yl { break; }
-        d -= yl;
-        y += 1;
-    }
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let ml = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut mo = 1;
-    while d >= ml[(mo - 1) as usize] { d -= ml[(mo - 1) as usize]; mo += 1; }
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+    crate::util::rfc3339_from_unix(crate::util::unix_now_secs())
 }
 
 /// 一条本地事件（时间倒序展示）。
