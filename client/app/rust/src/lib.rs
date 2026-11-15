@@ -1,14 +1,9 @@
-//! eterm 客户端核心（技术方案 §4.2）：本地库、同步引擎、SSH/SFTP/keygen。
-//! 模块依赖单向：api → {sync, ssh, sftp, keygen} → store。
-//! 当前为 M0 骨架：字段加密（与服务端 v1 格式同构）与本地库可用，
-//! russh/frb 集成随 spike S2/S3 落地。
+//! eterm 客户端核心：api（frb 导出面：ssh 会话 / local 本地库）→ store（本地库）
+//! → util（LKMK 与字段加密）。wire 类型以 store::WireChange 为准。
+//! SSH/SFTP/keygen 的独立模块化拆分待对应功能落地时再引入。
 
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 
 pub mod api;
-pub mod keygen;
-pub mod sftp;
-pub mod ssh;
 pub mod store;
-pub mod sync;
 pub mod util;

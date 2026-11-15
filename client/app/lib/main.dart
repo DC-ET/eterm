@@ -164,10 +164,32 @@ class _BootState extends State<_Boot> {
                     fontWeight: FontWeight.w800,
                     color: Et.textPrimary)),
             const SizedBox(height: 12),
-            if (_note != null)
+            if (_note != null) ...[
               Text(_note!,
-                  style: const TextStyle(fontSize: 12, color: Et.textSecondary))
-            else
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: Et.textSecondary)),
+              if (_fatal) ...[
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _fatal = false;
+                      _note = null;
+                    });
+                    _boot();
+                  },
+                  icon: const Icon(Icons.refresh, size: 17),
+                  label: const Text('重试'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Et.primaryBtn,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9)),
+                    minimumSize: const Size(0, 38),
+                  ),
+                ),
+              ],
+            ] else
               const SizedBox(
                 width: 20,
                 height: 20,

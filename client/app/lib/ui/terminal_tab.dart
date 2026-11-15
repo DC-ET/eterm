@@ -42,9 +42,6 @@ final _monoFont = Platform.isWindows
         ? 'Menlo'
         : 'monospace';
 
-/// 键条按压触觉反馈
-void _haptic() => HapticFeedback.selectionClick();
-
 class _TerminalTabViewState extends State<TerminalTabView> {
   final _bytes = StreamController<List<int>>();
   final _focus = FocusNode();

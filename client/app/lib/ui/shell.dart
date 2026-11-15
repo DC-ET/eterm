@@ -3,8 +3,6 @@
 // 窄屏（手机竖屏，<720）响应式：侧边导航换成底部导航栏，内容区满幅。
 // IndexedStack 保持后台终端标签的会话存活。
 
-import 'dart:io' show Platform;
-
 import 'package:flutter/services.dart';
 
 import 'package:eterm/src/rust/api/local.dart' as local;
@@ -397,7 +395,7 @@ class _TitleBar extends StatelessWidget {
       color: Et.titleBar,
       child: SafeArea(
         bottom: false,
-        child: Container(
+        child: SizedBox(
           height: 52,
           child: DragToMoveArea(
         child: Row(
