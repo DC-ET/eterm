@@ -208,8 +208,10 @@ class _ShellPageState extends State<ShellPage> {
                 ),
       ],
     );
-    // 手机终端页：深色标题栏隐藏（标签条吸底接管），其余视图保留账号入口
-    final showTitleBar = !compact || activeTab == -1;
+    // 顶部结构（Android 状态栏避让的正确层级）：
+    // - 桌面：深色标题栏背景延伸到状态栏区（SafeArea 推内容行），图标 light
+    // - 手机：无深色标题栏（账号入口在各页 app bar），浅色状态栏 dark 图标；
+    //   终端视图由 TerminalTabView 自带深色状态栏区（内部 SafeArea，light 图标）
     return PopScope<Object?>(
       canPop: activeTab == -1,
       onPopInvokedWithResult: (didPop, _) {
@@ -217,25 +219,25 @@ class _ShellPageState extends State<ShellPage> {
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
       value: compact && activeTab >= 0
-          ? SystemUiOverlayStyle.light // 终端顶部深色区
-          : SystemUiOverlayStyle.dark,
+          ? SystemUiOverlayStyle.light // 手机终端：深色状态栏区
+          : SystemUiOverlayStyle.dark, // 手机列表浅色 / 桌面无状态栏
       child: Scaffold(
       backgroundColor: Et.contentBg,
       body: Column(
         children: [
-          if (showTitleBar)
+          if (!compact) ...[
             _TitleBar(
               username: widget.username,
               tabs: tabs,
               activeTab: activeTab,
-              compact: compact,
               onSelectVault: () => setState(() => activeTab = -1),
               onSelectTab: (i) => setState(() => activeTab = i),
               onCloseTab: closeTab,
               onLogout: _logout,
             ),
-          if (widget.app.loading)
-            const LinearProgressIndicator(minHeight: 2, color: Et.accent),
+            if (widget.app.loading)
+              const LinearProgressIndicator(minHeight: 2, color: Et.accent),
+          ],
           Expanded(child: body),
         ],
       ),
@@ -378,7 +380,6 @@ class _TitleBar extends StatelessWidget {
     required this.onSelectTab,
     required this.onCloseTab,
     required this.onLogout,
-    this.compact = false,
   });
 
   final String username;
@@ -388,18 +389,20 @@ class _TitleBar extends StatelessWidget {
   final void Function(int) onSelectTab;
   final void Function(int) onCloseTab;
   final VoidCallback onLogout;
-  final bool compact; // 手机：无交通灯，让位区收窄
 
   @override
   Widget build(BuildContext context) {
+    // 深色背景延伸到状态栏区（SafeArea 把内容行推到状态栏下方），视觉连续
     return Container(
-      height: 52,
       color: Et.titleBar,
-      child: DragToMoveArea(
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          height: 52,
+          child: DragToMoveArea(
         child: Row(
           children: [
-            // 交通灯区：桌面端保留让位（窄窗也有交通灯），手机端不占
-            SizedBox(width: compact ? (Platform.isAndroid || Platform.isIOS ? 10 : 66) : 78),
+            const SizedBox(width: 78), // 交通灯让位区
             _VaultPill(username: username, onLogout: onLogout, onSelectVault: onSelectVault),
             const SizedBox(width: 10),
             // 标签区：多了横向滚动，不挤溢通知钮
@@ -414,7 +417,7 @@ class _TitleBar extends StatelessWidget {
                         active: activeTab == i,
                         onTap: () => onSelectTab(i),
                         onClose: () => onCloseTab(i),
-                        maxLabelWidth: compact ? 84 : 160,
+                        maxLabelWidth: 160,
                       ),
                   ],
                 ),
@@ -428,6 +431,8 @@ class _TitleBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
+        ),
+      ),
         ),
       ),
     );

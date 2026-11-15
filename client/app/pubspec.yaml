@@ -28,6 +28,7 @@ dependency_overrides:
   path_provider_foundation: 2.6.0
 
 dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
@@ -36,3 +37,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+# 应用图标生成（dart run flutter_launcher_icons）
+flutter_launcher_icons:
+  image_path: assets/icon/icon-1024.png
+  android: true
+  adaptive_icon_background: "#232937"
+  adaptive_icon_foreground: assets/icon/icon-foreground.png
+  macos:
+    generate: true
