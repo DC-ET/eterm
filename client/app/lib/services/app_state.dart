@@ -22,6 +22,22 @@ class GroupView {
   final int count;
 }
 
+class KeyView {
+  KeyView({
+    required this.id,
+    required this.label,
+    required this.keyType,
+    required this.fingerprint,
+    required this.usedBy,
+  });
+
+  final String id;
+  final String label;
+  final String keyType;
+  final String fingerprint;
+  final List<String> usedBy; // 使用此密钥的主机 label
+}
+
 class HostView {
   HostView({
     required this.id,
@@ -132,6 +148,76 @@ class AppState extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  /// 密钥视图：ssh_key 实体 + 反向引用（哪些主机在用）。
+  List<KeyView> get keys {
+    // hostId → host label
+    final hostLabel = <String, String>{};
+    // identityId → keyId
+    final keyOfIdentity = <String, String>{};
+    for (final e in _entities.values) {
+      if (e['id'] != null && e.keys.contains('hostname')) {
+        hostLabel[e['id'] as String] = (e['label'] ?? e['id']).toString();
+      }
+      if (e['id'] != null && e.keys.contains('key_id')) {
+        final kid = e['key_id'];
+        if (kid is String && kid.isNotEmpty) {
+          keyOfIdentity[e['id'] as String] = kid;
+        }
+      }
+    }
+    // keyId → hostId（经 protocol.config_json.identity_id）
+    final hostsOfKey = <String, Set<String>>{};
+    for (final e in _entities.values) {
+      if (e['kind'] != 'ssh') continue;
+      final cfg = (e['config_json'] ?? <String, dynamic>{}) as Map<String, dynamic>;
+      final iid = cfg['identity_id'] as String?;
+      final kid = iid == null ? null : keyOfIdentity[iid];
+      final hid = e['host_id'] as String?;
+      if (kid != null && hid != null) {
+        hostsOfKey.putIfAbsent(kid, () => {}).add(hid);
+      }
+    }
+    final list = <KeyView>[];
+    for (final e in _entities.values) {
+      if (e['id'] == null || !e.keys.contains('private_enc')) continue;
+      final id = e['id'] as String;
+      list.add(KeyView(
+        id: id,
+        label: (e['label'] ?? id).toString(),
+        keyType: (e['key_type'] ?? 'unknown').toString(),
+        fingerprint: (e['fingerprint'] ?? '').toString(),
+        usedBy: (hostsOfKey[id] ?? {})
+            .map((hid) => hostLabel[hid] ?? hid)
+            .toList()
+          ..sort(),
+      ));
+    }
+    list.sort((a, b) => a.label.compareTo(b.label));
+    return list;
+  }
+
+  /// 删除密钥（仅限未被任何主机引用；引用中的密钥删除会造成 identity 悬空）。
+  Future<void> deleteKey(KeyView k) async {
+    if (k.usedBy.isNotEmpty) {
+      throw ApiException(200, '该密钥正被使用：${k.usedBy.join("、")}。请先在这些主机的编辑里更换凭据。');
+    }
+    final e = _entities['ssh_key/${k.id}'];
+    if (e == null) return;
+    final results = await api.push([
+      {
+        'entity_type': 'ssh_key',
+        'entity_id': k.id,
+        'base_rev': (e['rev'] as num?)?.toInt() ?? 0,
+        'op': 'delete',
+      }
+    ]);
+    final bad = results.where((r) => r['status'] != 'ok').toList();
+    if (bad.isNotEmpty) {
+      throw ApiException(200, '删除被拒: ${bad.map((r) => r['status']).join(",")}');
+    }
+    await refresh();
   }
 
   /// 增量同步：从本地库游标拉取变更 → 折叠进本地库 → 重建视图。

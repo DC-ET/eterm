@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'hosts_page.dart';
+import 'keychain_page.dart';
 import 'known_hosts_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
@@ -127,8 +128,7 @@ class _ShellPageState extends State<ShellPage> {
           onLogout: _logout,
           mobileUsername: widget.username,
         ),
-      1 => const PlaceholderPage(
-          title: 'Keychain', note: '密钥管理 UI 随 M1 落地（OS 钥匙串 + ssh_key 实体）'),
+      1 => KeychainPage(app: widget.app),
       2 => const PlaceholderPage(title: 'Port Forwarding', note: '端口转发管理随 M2 落地'),
       3 => const PlaceholderPage(title: 'Snippets', note: '代码片段随 M3 落地'),
       4 => const KnownHostsPage(),
