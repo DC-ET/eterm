@@ -1,8 +1,11 @@
-// 应用状态（M0.5）：同步折叠 → 视图模型（分组/主机卡片）、添加主机（push）。
-// 私钥认证暂不持久化（ssh_key 实体与密钥管理 UI 随 M1 落地），仅会话内存。
+// 应用状态（M1）：本地库快照引导 + 增量 cursor 同步 + 私钥入中枢（ssh_key 实体链）。
+// 凭据解析：identity.password_enc（口令）| identity.key_id → ssh_key.private_enc（私钥）。
+// 私钥/口令都随中枢同步（服务端静态加密），重启与跨设备均可用。
 
+import 'dart:convert';
 import 'dart:math';
 
+import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
@@ -30,21 +33,31 @@ class HostView {
   final String hostname;
   final int port;
   final String username;
-  final String? identityId; // 指向 identity 实体（口令认证）；null = 私钥（会话内存）
+  final String? identityId; // 指向 identity 实体
   final String? groupId; // 指向 host_group；null = 未分组
 }
 
-/// 口令认证的主机密钥来自 identity.password_enc（pull 时已是明文）；
-/// 私钥认证的主机密钥在内存里按 host id 存放，重启即失。
 class AppState extends ChangeNotifier {
   AppState({required this.api});
 
   final ApiClient api;
 
   Map<String, Map<String, dynamic>> _entities = {};
-  final Map<String, String> _sessionKeys = {}; // hostId → PEM（仅私钥，内存）
   bool loading = false;
-  String? error;
+  String? error; // 'unauthorized' 会触发壳层回登录页
+
+  /// 启动引导：从本地库快照加载（离线可见），随后可调 refresh() 增量同步。
+  Future<void> bootstrap() async {
+    try {
+      final snap = jsonDecode(local.storeLoad()) as Map<String, dynamic>;
+      final entities = (snap['entities'] as Map).cast<String, dynamic>();
+      _entities = entities.map((k, v) => MapEntry(k, (v as Map).cast<String, dynamic>()));
+      error = null;
+      notifyListeners();
+    } catch (_) {
+      // 本地库不可用：内存空集继续（推送类操作仍可用）
+    }
+  }
 
   List<HostView> get hosts {
     final protocols = <String, Map<String, dynamic>>{}; // host_id → protocol
@@ -58,7 +71,6 @@ class AppState extends ChangeNotifier {
         final proto = protocols[hostId];
         final cfg = (proto?['config_json'] ?? <String, dynamic>{}) as Map<String, dynamic>;
         final identityId = cfg['identity_id'] as String?;
-        // 口令主机必须有 identity；私钥主机走 _sessionKeys
         if (identityId != null && !_entities.containsKey('identity/$identityId')) continue;
         list.add(HostView(
           id: hostId,
@@ -97,39 +109,56 @@ class AppState extends ChangeNotifier {
   String? groupName(String? id) =>
       id == null ? null : _entities['host_group/$id']?['label']?.toString();
 
-  /// 连接凭据解析：identity 口令 / 会话内私钥。null = 无凭据。
+  /// 连接凭据解析：identity 口令 / ssh_key 私钥（均来自中枢，重启可用）。
   ({String authKind, String secret})? credentialFor(HostView h) {
-    if (h.identityId != null) {
-      final identity = _entities['identity/${h.identityId}'];
-      final password = identity?['password_enc'];
-      if (password is String && password.isNotEmpty) {
-        return (authKind: 'password', secret: password);
-      }
-      return null;
+    if (h.identityId == null) return null;
+    final identity = _entities['identity/${h.identityId}'];
+    if (identity == null) return null;
+    final password = identity['password_enc'];
+    if (password is String && password.isNotEmpty) {
+      return (authKind: 'password', secret: password);
     }
-    final pem = _sessionKeys[h.id];
-    if (pem != null) return (authKind: 'key', secret: pem);
+    final keyId = identity['key_id'] as String?;
+    if (keyId != null) {
+      final key = _entities['ssh_key/$keyId'];
+      final pem = key?['private_enc'];
+      if (pem is String && pem.isNotEmpty) {
+        return (authKind: 'key', secret: pem);
+      }
+    }
     return null;
   }
 
-  void rememberSessionKey(String hostId, String pem) => _sessionKeys[hostId] = pem;
-
+  /// 增量同步：从本地库游标拉取变更 → 折叠进本地库 → 重建视图。
   Future<void> refresh() async {
     loading = true;
     error = null;
     notifyListeners();
     try {
-      _entities = await api.pullAll();
+      var cursor = local.storeCursor().toInt();
+      while (true) {
+        final (changes, newCursor, hasMore) = await api.pullBatch(cursor);
+        if (changes.isNotEmpty) {
+          local.storeApply(
+            changesJson: jsonEncode(changes),
+            cursor: BigInt.from(newCursor),
+          );
+        }
+        cursor = newCursor;
+        if (!hasMore) break;
+      }
+      await bootstrap(); // 快照重建（保持单一数据源）
     } on ApiException catch (e) {
-      error = e.error;
+      error = e.status == 401 ? 'unauthorized' : e.error;
     } finally {
       loading = false;
       notifyListeners();
     }
   }
 
-  /// 添加主机：host(+可选 group) + host_protocol(ssh)；口令认证另建 identity。
-  /// 私钥认证不落库（M1），仅登记会话内存。
+  /// 添加主机：host(+可选 group) + host_protocol(ssh)。
+  /// 口令认证 → identity.password_enc；私钥认证 → ssh_key 实体 + identity.key_id。
+  /// 全部走中枢（服务端静态加密），重启与跨设备可用。
   Future<void> addHost({
     required String label,
     required String hostname,
@@ -141,70 +170,101 @@ class AppState extends ChangeNotifier {
     String? newGroupName,
   }) async {
     final hostId = _newUuid();
-    String? identityId;
+    final identityId = _newUuid();
     String? effectiveGroupId = groupId;
     final changes = <Map<String, dynamic>>[];
     if (groupId == null && newGroupName != null && newGroupName.trim().isNotEmpty) {
       effectiveGroupId = _newUuid();
-      changes.add({
-        'entity_type': 'host_group',
-        'entity_id': effectiveGroupId,
-        'base_rev': 0,
-        'op': 'upsert',
-        'data': {'label': newGroupName.trim(), 'sort': 0},
-      });
-    }
-    changes.add({
-      'entity_type': 'host',
-      'entity_id': hostId,
-      'base_rev': 0,
-      'op': 'upsert',
-      'data': {
-        'label': label,
-        'hostname': hostname,
-        'tags': <String>[],
-        'group_id': ?effectiveGroupId,
-      },
-    });
-    if (usePassword) {
-      identityId = _newUuid();
-      changes.add({
-        'entity_type': 'identity',
-        'entity_id': identityId,
-        'base_rev': 0,
-        'op': 'upsert',
-        'data': {
-          'label': username,
-          'username': username,
-          'password_enc': secret,
-          'key_id': null,
-        },
-      });
-    }
-    changes.add({
-      'entity_type': 'host_protocol',
-      'entity_id': _newUuid(),
-      'base_rev': 0,
-      'op': 'upsert',
-      'data': {
-        'host_id': hostId,
-        'kind': 'ssh',
-        'config_json': {
-          'port': port,
-          'username': username,
-          'identity_id': ?identityId,
-        },
+      changes.add(_upsert('host_group', effectiveGroupId, {
+        'label': newGroupName.trim(),
         'sort': 0,
-      },
-    });
+      }));
+    }
+    changes.add(_upsert('host', hostId, {
+      'label': label,
+      'hostname': hostname,
+      'tags': <String>[],
+      'group_id': ?effectiveGroupId,
+    }));
+    if (usePassword) {
+      changes.add(_upsert('identity', identityId, {
+        'label': username,
+        'username': username,
+        'password_enc': secret,
+        'key_id': null,
+      }));
+    } else {
+      final keyId = _newUuid();
+      changes.add(_upsert('ssh_key', keyId, {
+        'label': label,
+        'key_type': 'imported-pem',
+        'private_enc': secret,
+        'public_key': '',
+        'fingerprint': '',
+        'origin': 'imported',
+        'key_version': 1,
+      }));
+      changes.add(_upsert('identity', identityId, {
+        'label': username,
+        'username': username,
+        'key_id': keyId,
+      }));
+    }
+    changes.add(_upsert('host_protocol', _newUuid(), {
+      'host_id': hostId,
+      'kind': 'ssh',
+      'config_json': {'port': port, 'username': username, 'identity_id': identityId},
+      'sort': 0,
+    }));
     final results = await api.push(changes);
     final bad = results.where((r) => r['status'] != 'ok').toList();
     if (bad.isNotEmpty) {
       throw ApiException(200, '推送被拒: ${bad.map((r) => r['status']).join(",")}');
     }
-    if (!usePassword) rememberSessionKey(hostId, secret);
     await refresh();
   }
+
+  /// 删除主机：主机 + ssh 协议 + identity（+ssh_key）全部墓碑下线。
+  Future<void> deleteHost(HostView h) async {
+    final changes = <Map<String, dynamic>>[];
+    void tomb(String type, String id) {
+      final e = _entities['$type/$id'];
+      if (e == null) return;
+      changes.add({
+        'entity_type': type,
+        'entity_id': id,
+        'base_rev': (e['rev'] as num?)?.toInt() ?? 0,
+        'op': 'delete',
+      });
+    }
+
+    tomb('host', h.id);
+    for (final e in _entities.values) {
+      if (e['kind'] == 'ssh' && e['host_id'] == h.id) tomb('host_protocol', e['id'] as String);
+    }
+    if (h.identityId != null) {
+      final identityId = h.identityId!;
+      final identity = _entities['identity/$identityId'];
+      final keyId = identity?['key_id'] as String?;
+      tomb('identity', identityId);
+      if (keyId != null) tomb('ssh_key', keyId);
+    }
+    if (changes.isEmpty) return;
+    final results = await api.push(changes);
+    final bad = results.where((r) => r['status'] != 'ok').toList();
+    if (bad.isNotEmpty) {
+      throw ApiException(200, '删除被拒: ${bad.map((r) => r['status']).join(",")}');
+    }
+    await refresh();
+  }
+
+  Map<String, dynamic> _upsert(String type, String id, Map<String, dynamic> data) => {
+        'entity_type': type,
+        'entity_id': id,
+        'base_rev': 0,
+        'op': 'upsert',
+        'data': data,
+      };
 }
 
 String _newUuid() {

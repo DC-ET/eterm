@@ -2,6 +2,7 @@
 // vault 视图 = 左侧导航 + 内容区；终端标签激活时满幅接管内容区（侧栏隐藏）。
 // IndexedStack 保持后台终端标签的会话存活。
 
+import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:xterm/xterm.dart';
@@ -77,9 +78,34 @@ class _ShellPageState extends State<ShellPage> {
     try {
       await widget.api.logout();
     } catch (_) {}
+    local.clearLocal(); // 会话 + 本地缓存一并清理
     if (!mounted) return;
     Navigator.of(context)
         .pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+  }
+
+  /// token 失效（401）：静默回登录页。
+  void _onAuthLost() {
+    local.clearLocal();
+    if (!mounted) return;
+    Navigator.of(context)
+        .pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.app.addListener(_appChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.app.removeListener(_appChanged);
+    super.dispose();
+  }
+
+  void _appChanged() {
+    if (widget.app.error == 'unauthorized') _onAuthLost();
   }
 
   @override

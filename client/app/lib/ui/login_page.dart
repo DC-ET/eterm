@@ -3,6 +3,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import 'package:eterm/src/rust/api/local.dart' as local;
+
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'shell.dart';
@@ -47,10 +49,17 @@ class _LoginPageState extends State<LoginPage> {
         deviceName: 'eterm-mac',
       );
       if (!mounted) return;
+      // 会话持久化：token 密文落本地库（LKMK 钥匙串保护），重启免登录
+      final server = _server.text.trim().replaceAll(RegExp(r'/+$'), '');
+      local.saveSession(server: server, token: result.token);
+      local.kvPut(key: 'username', value: result.username);
+      final app = AppState(api: api);
+      await app.bootstrap();
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => ShellPage(
           api: api,
-          app: AppState(api: api),
+          app: app,
           username: result.username,
         ),
       ));

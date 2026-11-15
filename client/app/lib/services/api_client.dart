@@ -85,6 +85,23 @@ class ApiClient {
     }
   }
 
+  /// 会话探活：返回当前用户名（恢复会话时校验 token 有效性）。
+  Future<String> me() async {
+    final j = await _req('GET', '/api/v1/me');
+    return ((j['user'] as Map)['username'] as String);
+  }
+
+  /// 增量拉取一批变更（从 since 游标），返回原始 changes（供本地库折叠）。
+  /// 单批 ≤ limit；返回 (changes, newCursor, hasMore)。
+  Future<(List<dynamic>, int, bool)> pullBatch(int since, {int limit = 500}) async {
+    final j = await _req('GET', '/api/v1/sync/pull?cursor=$since&limit=$limit');
+    return (
+      (j['changes'] as List),
+      j['cursor'] as int,
+      j['has_more'] == true,
+    );
+  }
+
   /// 全量拉取并折叠为当前实体集（"type/id" → data；upsert 覆盖、delete 移除）。
   /// M0 骨架：每次从 cursor=0 重放（数据量小）；增量 cursor 记忆随 M1 落地。
   Future<Map<String, Map<String, dynamic>>> pullAll() async {

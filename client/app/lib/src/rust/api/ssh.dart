@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'ssh.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit`, `run_inner`, `send_cmd`
+// These functions are ignored because they are not marked as `pub`: `emit`, `run_inner`, `runtime`, `send_cmd`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Cmd`, `SessionInner`, `Session`, `TrustAll`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `check_server_key`, `clone`, `fmt`
 

@@ -3,6 +3,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import '../services/api_client.dart';
+
 import '../services/app_state.dart';
 import 'add_host_dialog.dart';
 import 'theme.dart';
@@ -180,6 +182,40 @@ class _HostsPageState extends State<HostsPage> {
     );
   }
 
+  Future<void> _confirmDelete(HostView h) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('删除主机',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Et.textPrimary)),
+        content: Text('将从你的 vault 中删除「${h.label}」（${h.username}@${h.hostname}），'
+            '关联的凭据一并下线。此操作会同步到所有设备。',
+            style: const TextStyle(fontSize: 13.5, color: Et.textSecondary)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFD1242F),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9))),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.app.deleteHost(h);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('删除失败: ${e.error}')));
+    }
+  }
+
   Widget _viewToggle(IconData icon, bool active) => IconButton(
         onPressed: () {},
         icon: Icon(icon,
@@ -218,6 +254,7 @@ class _HostsPageState extends State<HostsPage> {
                 host: h,
                 groupName: widget.app.groupName(h.groupId),
                 onTap: () => _connect(h),
+                onDelete: () => _confirmDelete(h),
               );
             },
           ),
@@ -332,10 +369,12 @@ class _HostCard extends StatelessWidget {
     required this.host,
     required this.groupName,
     required this.onTap,
+    required this.onDelete,
   });
   final HostView host;
   final String? groupName;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -368,9 +407,33 @@ class _HostCard extends StatelessWidget {
               ],
             ),
           ),
+          IconButton(
+            icon: const Icon(Icons.more_horiz,
+                size: 18, color: Et.textSecondary),
+            tooltip: '操作',
+            onPressed: () => _showMenu(context),
+          ),
         ],
       ),
     );
+  }
+
+  void _showMenu(BuildContext context) {
+    showMenu<String>(
+      context: context,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: const RelativeRect.fromLTRB(0, 0, 0, 0),
+      items: const [
+        PopupMenuItem(
+            value: 'delete',
+            height: 40,
+            child: Text('删除主机',
+                style: TextStyle(fontSize: 13.5, color: Color(0xFFD1242F)))),
+      ],
+    ).then((v) {
+      if (v == 'delete') onDelete();
+    });
   }
 }
 

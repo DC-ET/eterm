@@ -25,3 +25,7 @@ flutter_rust_bridge = "=2.13.0"
 
 [dev-dependencies]
 tempfile = "3"
+
+# macOS 钥匙串（LKMK 存取）；Android 侧 M1 用平台沙箱目录兜底
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"

@@ -1,11 +1,19 @@
-// eterm 客户端（M0.5）：Termius 式桌面壳——自绘标题栏、侧边导航、浅色主题。
-// Rust 侧经 frb 提供 SSH 会话与字段加解密（crate rust_lib_eterm）。
+// eterm 客户端（M1）：Termius 式桌面壳 + 本地 working set。
+// 启动流程：frb 初始化 → init_core（sqlite+钥匙串）→ 恢复会话 →
+//   有会话：/me 探活（离线也放行，靠本地快照渲染）→ ShellPage；
+//   无会话/探活 401：登录页。
+// Rust 侧经 frb 提供 SSH 会话、字段加解密与本地库（crate rust_lib_eterm）。
 
+import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/frb_generated.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'services/api_client.dart';
+import 'services/app_state.dart';
 import 'ui/login_page.dart';
+import 'ui/shell.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
@@ -42,7 +50,94 @@ class EtermApp extends StatelessWidget {
         scaffoldBackgroundColor: Et.contentBg,
         fontFamilyFallback: const ['PingFang SC', 'Helvetica Neue'],
       ),
-      home: const LoginPage(),
+      home: const _Boot(),
+    );
+  }
+}
+
+/// 启动引导页：初始化本地库并恢复会话，决定进登录页还是主壳。
+class _Boot extends StatefulWidget {
+  const _Boot();
+
+  @override
+  State<_Boot> createState() => _BootState();
+}
+
+class _BootState extends State<_Boot> {
+  String? _note;
+
+  @override
+  void initState() {
+    super.initState();
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      local.initCore(dataDir: dir.path);
+    } catch (e) {
+      setState(() => _note = '本地库初始化失败: $e');
+    }
+    if (!mounted) return;
+    final sess = local.restoreSession(); // [server, token, username]
+    if (sess.length < 2) {
+      _go(const LoginPage());
+      return;
+    }
+    final api = ApiClient(baseUrl: sess[0])..token = sess[1];
+    final app = AppState(api: api);
+    await app.bootstrap(); // 本地快照（离线可见）
+    var username = sess.length >= 3 && sess[2].isNotEmpty ? sess[2] : '';
+    try {
+      username = await api.me(); // 在线则校验 token 并取最新用户名
+      local.kvPut(key: 'username', value: username);
+    } on ApiException catch (e) {
+      if (e.status == 401) {
+        local.clearLocal();
+        _go(const LoginPage());
+        return;
+      }
+      // 网络不可达：离线进入（本地快照渲染）
+      if (mounted) setState(() => _note = '离线模式');
+    } catch (_) {
+      // 离线进入
+    }
+    if (!mounted) return;
+    _go(ShellPage(api: api, app: app, username: username));
+  }
+
+  void _go(Widget page) {
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => page));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Et.contentBg,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('eterm',
+                style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    color: Et.textPrimary)),
+            const SizedBox(height: 12),
+            if (_note != null)
+              Text(_note!,
+                  style: const TextStyle(fontSize: 12, color: Et.textSecondary))
+            else
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
