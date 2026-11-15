@@ -138,9 +138,10 @@ export async function pushItem(
   const conn = await db.pool.getConnection();
   try {
     await conn.beginTransaction();
+    // 归属校验（评审 BUG-1）：只允许操作本 vault 的实体；他 vault 同 id 实体按"不存在"处理
     const [rows] = await conn.query<RowDataPacket[]>(
-      `SELECT rev, deleted_at FROM ${ent.table} WHERE id = ? FOR UPDATE`,
-      [entityId],
+      `SELECT rev, deleted_at FROM ${ent.table} WHERE id = ? AND vault_id = ? FOR UPDATE`,
+      [entityId, vaultId],
     );
     const exists = rows.length > 0;
     const curRev = exists ? Number(rows[0]!["rev"]) : 0;
@@ -191,6 +192,9 @@ export async function pushItem(
           return ok(curRev);
         }
         if (curRev !== item.baseRev) return await conflict();
+        // 复活同样不得改写密钥内容（评审 BUG-3：与存活行路径同规则）
+        const immRes = await checkKeyImmutability(db, conn, ent, entityId, data);
+        if (immRes) return await fail(rejected(immRes));
         await updateEntity(db, conn, ent, entityId, data, true);
         const rev = await allocRev(db, conn, ent, entityId, vaultId, deviceId);
         return await commitAndOk(rev);
@@ -198,6 +202,9 @@ export async function pushItem(
 
       // 存活行
       if (item.op === "delete") {
+        // 删除同样做 base_rev 乐观锁（评审 BUG-2）：陈旧删除按冲突处理，
+        // 避免静默覆盖并发更新（技术方案 §3.3：base_rev 校验 / 版本不符 → conflict）
+        if (curRev !== item.baseRev) return await conflict();
         await conn.query(`UPDATE ${ent.table} SET deleted_at = UTC_TIMESTAMP(3) WHERE id = ?`, [
           entityId,
         ]);
@@ -212,6 +219,10 @@ export async function pushItem(
       return await commitAndOk(rev);
     } catch (e) {
       if (e instanceof PushReject) return await fail(rejected(e.message));
+      // 归属校验后"本 vault 不存在"的插入可能撞其他 vault 已占用的主键
+      if ((e as { code?: string }).code === "ER_DUP_ENTRY") {
+        return await fail(rejected("entity_id 已被其他 vault 占用"));
+      }
       return await serverErr(e);
     }
   } catch (outer) {
