@@ -10,10 +10,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  material_ui: ^1.1.0
+  material_ui: ^1.11.0
   cupertino_icons: ^1.0.8
   path_provider: ^2.1.4
-  window_manager: ^0.4.3
+  window_manager: ^0.7.0
   freezed_annotation: ^2.4.4
   rust_lib_eterm:
     path: rust_builder
@@ -21,6 +21,11 @@ dependencies:
   # vendor fork 4.0.0-eterm.1：含 DEL 忽略 + 宽字符光标吸附两补丁（技术方案 §4.1）
   xterm:
     path: ../third_party/xterm
+
+# 镜像源曾把 foundation 解析到不存在的 1.9.1（无 macos 插件声明，导致注册表缺插件、
+# 桌面启动黑窗）。钉住已缓存的 2.6.0；镜像修复后可移除。
+dependency_overrides:
+  path_provider_foundation: 2.6.0
 
 dev_dependencies:
   flutter_test:

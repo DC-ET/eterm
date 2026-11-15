@@ -2,26 +2,20 @@ PODS:
   - FlutterMacOS (1.0.0)
   - rust_lib_eterm (0.0.1):
     - FlutterMacOS
-  - window_manager (0.2.0):
-    - FlutterMacOS
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - rust_lib_eterm (from `Flutter/ephemeral/.symlinks/plugins/rust_lib_eterm/macos`)
-  - window_manager (from `Flutter/ephemeral/.symlinks/plugins/window_manager/macos`)
 
 EXTERNAL SOURCES:
   FlutterMacOS:
     :path: Flutter/ephemeral
   rust_lib_eterm:
     :path: Flutter/ephemeral/.symlinks/plugins/rust_lib_eterm/macos
-  window_manager:
-    :path: Flutter/ephemeral/.symlinks/plugins/window_manager/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   rust_lib_eterm: 6e9990be0b5b9ffa443f0eea3170d78530237d7f
-  window_manager: 1d01fa7ac65a6e6f83b965471b1a7fdd3f06166c
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 

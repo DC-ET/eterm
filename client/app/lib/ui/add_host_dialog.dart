@@ -1,5 +1,8 @@
-// 添加主机对话框（Termius 式浅色；内容可滚动——修复多行域撑破对话框的 overflow）。
+// 新建/编辑主机对话框（Termius 式浅色；内容可滚动——修复多行域撑破对话框）。
+// 编辑模式：预填 + 认证方式只读；口令留空保持不变；私钥替换会新建 ssh_key 实体。
+// 凭据域带粘贴按钮；口令带可见性切换。
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../services/api_client.dart';
@@ -7,9 +10,16 @@ import '../services/app_state.dart';
 import 'theme.dart';
 
 class AddHostDialog extends StatefulWidget {
-  const AddHostDialog({super.key, required this.app});
+  const AddHostDialog({super.key, required this.app}) : editHost = null;
+
+  const AddHostDialog.edit({
+    super.key,
+    required this.app,
+    required HostView this.editHost,
+  });
 
   final AppState app;
+  final HostView? editHost;
 
   @override
   State<AddHostDialog> createState() => _AddHostDialogState();
@@ -27,7 +37,25 @@ class _AddHostDialogState extends State<AddHostDialog> {
   String? _groupId; // null = 未分组
   bool _newGroupMode = false;
   bool _busy = false;
+  bool _secretVisible = false;
   String? _error;
+
+  bool get _isEdit => widget.editHost != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final h = widget.editHost;
+    if (h != null) {
+      _label.text = h.label;
+      _hostname.text = h.hostname;
+      _port.text = '${h.port}';
+      _username.text = h.username;
+      _groupId = h.groupId;
+      final cred = widget.app.credentialFor(h);
+      _usePassword = cred?.authKind == 'password';
+    }
+  }
 
   @override
   void dispose() {
@@ -40,6 +68,13 @@ class _AddHostDialogState extends State<AddHostDialog> {
     super.dispose();
   }
 
+  Future<void> _pasteSecret() async {
+    final text = await Clipboard.getData(Clipboard.kTextPlain);
+    if (text?.text != null && text!.text!.isNotEmpty) {
+      setState(() => _secret.text = text.text!);
+    }
+  }
+
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
     setState(() {
@@ -47,16 +82,31 @@ class _AddHostDialogState extends State<AddHostDialog> {
       _error = null;
     });
     try {
-      await widget.app.addHost(
-        label: _label.text.trim(),
-        hostname: _hostname.text.trim(),
-        port: int.parse(_port.text.trim()),
-        username: _username.text.trim(),
-        usePassword: _usePassword,
-        secret: _secret.text,
-        groupId: _newGroupMode ? null : _groupId,
-        newGroupName: _newGroupMode ? _newGroup.text : null,
-      );
+      if (_isEdit) {
+        final h = widget.editHost!;
+        await widget.app.editHost(
+          host: h,
+          label: _label.text.trim(),
+          hostname: _hostname.text.trim(),
+          port: int.parse(_port.text.trim()),
+          username: _username.text.trim(),
+          groupId: _newGroupMode ? null : _groupId,
+          newGroupName: _newGroupMode ? _newGroup.text : null,
+          password: _usePassword ? _secret.text : null,
+          replaceKeyPem: !_usePassword ? _secret.text : null,
+        );
+      } else {
+        await widget.app.addHost(
+          label: _label.text.trim(),
+          hostname: _hostname.text.trim(),
+          port: int.parse(_port.text.trim()),
+          username: _username.text.trim(),
+          usePassword: _usePassword,
+          secret: _secret.text,
+          groupId: _newGroupMode ? null : _groupId,
+          newGroupName: _newGroupMode ? _newGroup.text : null,
+        );
+      }
       if (!mounted) return;
       Navigator.pop(context, true);
     } on ApiException catch (e) {
@@ -76,8 +126,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
       titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
       contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
       actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
-      title: const Text('新建主机',
-          style: TextStyle(
+      title: Text(_isEdit ? '编辑主机' : '新建主机',
+          style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
@@ -95,9 +145,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: _field(_hostname, '主机名 / IP'),
-                    ),
+                    Expanded(child: _field(_hostname, '主机名 / IP')),
                     const SizedBox(width: 10),
                     SizedBox(
                       width: 88,
@@ -119,7 +167,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        initialValue: _groupId ?? '',
+                        initialValue:
+                            _newGroupMode ? '__new__' : (_groupId ?? ''),
                         decoration: _dec('分组'),
                         items: [
                           const DropdownMenuItem(
@@ -166,20 +215,47 @@ class _AddHostDialogState extends State<AddHostDialog> {
                     foregroundColor: Et.textPrimary,
                   ),
                   showSelectedIcon: false,
-                  onSelectionChanged: (s) =>
-                      setState(() => _usePassword = s.first),
+                  // 编辑模式认证方式只读（切换=删除重建，避免凭据歧义）
+                  onSelectionChanged: _isEdit
+                      ? null
+                      : (s) => setState(() => _usePassword = s.first),
                 ),
                 const SizedBox(height: 12),
                 _field(
                   _secret,
-                  _usePassword ? '口令' : '私钥（OpenSSH PEM，会话内有效）',
-                  obscure: _usePassword,
+                  _secretLabel,
+                  obscure: _usePassword && !_secretVisible,
                   minLines: _usePassword ? 1 : 4,
                   maxLines: _usePassword ? 1 : 6,
+                  validator: _secretValidator,
+                  suffix: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 粘贴按钮（不依赖系统 Cmd+V 行为，安卓/桌面都可靠）
+                      IconButton(
+                        icon: const Icon(Icons.content_paste,
+                            size: 17, color: Et.textSecondary),
+                        tooltip: '粘贴',
+                        onPressed: _pasteSecret,
+                      ),
+                      if (_usePassword)
+                        IconButton(
+                          icon: Icon(
+                              _secretVisible
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                              size: 17,
+                              color: Et.textSecondary),
+                          tooltip: _secretVisible ? '隐藏' : '显示',
+                          onPressed: () =>
+                              setState(() => _secretVisible = !_secretVisible),
+                        ),
+                    ],
+                  ),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 10),
-                  Text('添加失败: $_error',
+                  Text('保存失败: $_error',
                       style: const TextStyle(
                           fontSize: 12.5, color: Color(0xFFD1242F))),
                 ],
@@ -191,10 +267,9 @@ class _AddHostDialogState extends State<AddHostDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消',
-              style: TextStyle(color: Et.textSecondary)),
-        ),
+            onPressed: () => Navigator.pop(context),
+            child:
+                const Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
@@ -210,10 +285,22 @@ class _AddHostDialogState extends State<AddHostDialog> {
                   width: 16,
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white))
-              : const Text('保存并同步'),
+              : Text(_isEdit ? '保存修改' : '保存并同步'),
         ),
       ],
     );
+  }
+
+  String get _secretLabel {
+    if (_isEdit) {
+      return _usePassword ? '口令（留空保持不变）' : '私钥（粘贴新 PEM 可替换；留空不变）';
+    }
+    return _usePassword ? '口令' : '私钥（OpenSSH PEM）';
+  }
+
+  String? Function(String?)? get _secretValidator {
+    if (_isEdit) return null; // 编辑：允许留空（保持现有凭据）
+    return (v) => (v == null || v.isEmpty) ? '必填' : null;
   }
 
   InputDecoration _dec(String label) => InputDecoration(
@@ -232,6 +319,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
     int maxLines = 1,
     TextInputType? keyboardType,
     String? Function(String?)? validator,
+    Widget? suffix,
   }) =>
       TextFormField(
         controller: c,
@@ -240,8 +328,13 @@ class _AddHostDialogState extends State<AddHostDialog> {
         minLines: minLines,
         maxLines: maxLines,
         keyboardType: keyboardType,
-        validator: validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
+        validator:
+            validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
         style: const TextStyle(fontSize: 14, color: Et.textPrimary),
-        decoration: _dec(label),
+        decoration: _dec(label).copyWith(
+          suffixIcon: suffix,
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 0, minHeight: 0),
+        ),
       );
 }

@@ -4,7 +4,7 @@
 
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea
 import 'package:xterm/xterm.dart';
 
 import '../services/api_client.dart';
@@ -105,13 +105,21 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _appChanged() {
-    if (widget.app.error == 'unauthorized') _onAuthLost();
+    if (widget.app.error == 'unauthorized') {
+      _onAuthLost();
+      return;
+    }
+    if (mounted) setState(() {}); // 同步 loading 状态驱动进度条
   }
 
   @override
   Widget build(BuildContext context) {
     final content = switch (navIndex) {
-      0 => HostsPage(app: widget.app, onOpenTerminal: openTerminal),
+      0 => HostsPage(
+          app: widget.app,
+          onOpenTerminal: openTerminal,
+          openHostIds: {for (final t in tabs) t.host.id},
+        ),
       1 => const PlaceholderPage(
           title: 'Keychain', note: '密钥管理 UI 随 M1 落地（OS 钥匙串 + ssh_key 实体）'),
       2 => const PlaceholderPage(title: 'Port Forwarding', note: '端口转发管理随 M2 落地'),
@@ -156,6 +164,8 @@ class _ShellPageState extends State<ShellPage> {
             onCloseTab: closeTab,
             onLogout: _logout,
           ),
+          if (widget.app.loading)
+            const LinearProgressIndicator(minHeight: 2, color: Et.accent),
           Expanded(child: body),
         ],
       ),
@@ -228,11 +238,13 @@ class _VaultPill extends StatelessWidget {
   final VoidCallback onSelectVault;
 
   void _showMenu(BuildContext context) {
+    final box = context.findRenderObject()! as RenderBox;
+    final pos = box.localToGlobal(Offset.zero);
     showMenu<String>(
       context: context,
       color: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: const RelativeRect.fromLTRB(80, 46, 0, 0),
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height, pos.dx + box.size.width, 0),
       items: [
         PopupMenuItem(enabled: false, child: Text('已登录：$username')),
         const PopupMenuItem(value: 'logout', child: Text('退出登录')),

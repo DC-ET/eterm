@@ -10,6 +10,11 @@ import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
 
+/// 凭据可读性（record 判空的可读写法）。
+extension CredentialAvailable on ({String authKind, String secret})? {
+  bool get available => this != null;
+}
+
 class GroupView {
   GroupView({required this.id, required this.label, required this.count});
   final String id;
@@ -265,6 +270,113 @@ class AppState extends ChangeNotifier {
         'op': 'upsert',
         'data': data,
       };
+
+  /// 已存实体的带 rev 更新（base_rev 必须取当前值，否则服务端判冲突）。
+  Map<String, dynamic> _update(String type, String id, Map<String, dynamic> data) {
+    final cur = _entities['$type/$id'];
+    return {
+      'entity_type': type,
+      'entity_id': id,
+      'base_rev': (cur?['rev'] as num?)?.toInt() ?? 0,
+      'op': 'upsert',
+      'data': data,
+    };
+  }
+
+  /// 编辑主机：label/hostname/port/username/分组；口令可改（原样可留空），
+  /// 私钥替换会新建 ssh_key 实体（服务端禁止覆盖既有密钥内容，immutable）并重指 key_id。
+  Future<void> editHost({
+    required HostView host,
+    required String label,
+    required String hostname,
+    required int port,
+    required String username,
+    String? groupId,
+    String? newGroupName,
+    String? password,
+    String? replaceKeyPem,
+  }) async {
+    final identityId = host.identityId;
+    if (identityId == null) {
+      throw ApiException(200, '该主机没有凭据实体，请删除后重新添加');
+    }
+    final identity = _entities['identity/$identityId'];
+    final oldPassword = identity?['password_enc'];
+    final oldKeyId = identity?['key_id'] as String?;
+    final isPasswordAuth = oldPassword is String && oldPassword.isNotEmpty;
+
+    String? effectiveGroupId = groupId;
+    final changes = <Map<String, dynamic>>[];
+    if (groupId == null && newGroupName != null && newGroupName.trim().isNotEmpty) {
+      effectiveGroupId = _newUuid();
+      changes.add(_upsert('host_group', effectiveGroupId, {
+        'label': newGroupName.trim(),
+        'sort': 0,
+      }));
+    }
+
+    changes.add(_update('host', host.id, {
+      'label': label,
+      'hostname': hostname,
+      'tags': _entities['host/${host.id}']?['tags'] ?? <String>[],
+      'group_id': ?effectiveGroupId,
+    }));
+
+    if (isPasswordAuth) {
+      changes.add(_update('identity', identityId, {
+        'label': username,
+        'username': username,
+        'password_enc':
+            (password != null && password.isNotEmpty) ? password : oldPassword,
+        'key_id': null,
+      }));
+    } else {
+      var keyId = oldKeyId;
+      if (replaceKeyPem != null && replaceKeyPem.isNotEmpty) {
+        keyId = _newUuid();
+        changes.add(_upsert('ssh_key', keyId, {
+          'label': label,
+          'key_type': 'imported-pem',
+          'private_enc': replaceKeyPem,
+          'public_key': '',
+          'fingerprint': '',
+          'origin': 'imported',
+          'key_version': 1,
+        }));
+      }
+      changes.add(_update('identity', identityId, {
+        'label': username,
+        'username': username,
+        'password_enc': null,
+        'key_id': keyId,
+      }));
+    }
+
+    final protocolId = _protocolIdOf(host.id);
+    if (protocolId == null) {
+      throw ApiException(200, '找不到该主机的 ssh 协议实体');
+    }
+    changes.add(_update('host_protocol', protocolId, {
+      'host_id': host.id,
+      'kind': 'ssh',
+      'config_json': {'port': port, 'username': username, 'identity_id': identityId},
+      'sort': 0,
+    }));
+
+    final results = await api.push(changes);
+    final bad = results.where((r) => r['status'] != 'ok').toList();
+    if (bad.isNotEmpty) {
+      throw ApiException(200, '推送被拒: ${bad.map((r) => r['status']).join(",")}');
+    }
+    await refresh();
+  }
+
+  String? _protocolIdOf(String hostId) {
+    for (final e in _entities.values) {
+      if (e['kind'] == 'ssh' && e['host_id'] == hostId) return e['id'] as String?;
+    }
+    return null;
+  }
 }
 
 String _newUuid() {

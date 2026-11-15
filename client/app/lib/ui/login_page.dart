@@ -25,6 +25,7 @@ class _LoginPageState extends State<LoginPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _passwordVisible = false;
   String? _error;
 
   @override
@@ -120,7 +121,21 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 14),
                 _field(_username, '用户名'),
                 const SizedBox(height: 14),
-                _field(_password, '口令', obscure: true),
+                _field(
+                  _password,
+                  '口令',
+                  obscure: !_passwordVisible,
+                  suffix: IconButton(
+                    icon: Icon(
+                        _passwordVisible
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        size: 18,
+                        color: Et.textSecondary),
+                    onPressed: () =>
+                        setState(() => _passwordVisible = !_passwordVisible),
+                  ),
+                ),
                 const SizedBox(height: 22),
                 FilledButton(
                   onPressed: _busy ? null : _submit,
@@ -160,6 +175,7 @@ class _LoginPageState extends State<LoginPage> {
     String label, {
     bool obscure = false,
     String? Function(String?)? validator,
+    Widget? suffix,
   }) =>
       TextFormField(
         controller: c,
@@ -173,6 +189,9 @@ class _LoginPageState extends State<LoginPage> {
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          suffixIcon: suffix,
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 0, minHeight: 0),
         ),
       );
 }

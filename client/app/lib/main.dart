@@ -10,7 +10,8 @@ import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/frb_generated.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:window_manager/window_manager.dart';
+// 0.7.0 重写为 nativeapi；旧 API（windowManager/WindowOptions）在 legacy.dart
+import 'package:window_manager/legacy.dart';
 
 import 'services/api_client.dart';
 import 'services/app_state.dart';
@@ -85,7 +86,13 @@ class _BootState extends State<_Boot> {
       setState(() => _note = '本地库初始化失败: $e');
     }
     if (!mounted) return;
-    final sess = local.restoreSession(); // [server, token, username]
+    List<String> sess;
+    try {
+      sess = local.restoreSession(); // [server, token, username]
+    } catch (_) {
+      local.clearLocal(); // 本地密文损坏（如密钥更替）：弃本地快照重新登录
+      sess = const [];
+    }
     if (sess.length < 2) {
       _go(const LoginPage());
       return;

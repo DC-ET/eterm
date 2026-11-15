@@ -1,19 +1,24 @@
 // Hosts 页（Termius 式）：搜索 + Connect、工具栏、分组/主机卡片网格。
-// 除 Hosts 外的导航项由壳层渲染为占位页（功能区随 M1/M2 落地）。
+// 卡片：点击连接、右键/长按快捷菜单（连接/编辑/删除）；有打开终端的主机显示状态点。
 
 import 'package:material_ui/material_ui.dart';
 
 import '../services/api_client.dart';
-
 import '../services/app_state.dart';
 import 'add_host_dialog.dart';
 import 'theme.dart';
 
 class HostsPage extends StatefulWidget {
-  const HostsPage({super.key, required this.app, required this.onOpenTerminal});
+  const HostsPage({
+    super.key,
+    required this.app,
+    required this.onOpenTerminal,
+    required this.openHostIds,
+  });
 
   final AppState app;
   final void Function(HostView) onOpenTerminal;
+  final Set<String> openHostIds; // 已开终端标签的主机 id
 
   @override
   State<HostsPage> createState() => _HostsPageState();
@@ -54,10 +59,9 @@ class _HostsPageState extends State<HostsPage> {
   }
 
   void _connect(HostView h) {
-    final cred = widget.app.credentialFor(h);
-    if (cred == null) {
+    if (!widget.app.credentialFor(h).available) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该主机没有可用凭据（私钥仅会话内有效，请删除后重新添加）')),
+        const SnackBar(content: Text('该主机还没有凭据，请通过卡片菜单「编辑主机」补充')),
       );
       return;
     }
@@ -73,6 +77,93 @@ class _HostsPageState extends State<HostsPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('主机已保存并同步')));
     }
+  }
+
+  Future<void> _editHost(HostView h) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => AddHostDialog.edit(app: widget.app, editHost: h),
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('主机已更新并同步')));
+    }
+  }
+
+  Future<void> _confirmDelete(HostView h) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('删除主机',
+            style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
+        content: Text('将从你的 vault 中删除「${h.label}」（${h.username}@${h.hostname}），'
+            '关联的凭据一并下线。此操作会同步到所有设备。',
+            style: const TextStyle(fontSize: 13.5, color: Et.textSecondary)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFD1242F),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(9))),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.app.deleteHost(h);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('删除失败: ${e.error}')));
+    }
+  }
+
+  void _cardMenu(HostView h, Offset anchorTopLeft, Size anchorSize) {
+    showMenu<String>(
+      context: context,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: RelativeRect.fromLTRB(
+        anchorTopLeft.dx,
+        anchorTopLeft.dy + anchorSize.height,
+        anchorTopLeft.dx + anchorSize.width,
+        0,
+      ),
+      items: [
+        const PopupMenuItem(
+            value: 'connect',
+            height: 40,
+            child: _MenuItemText('连接终端', Et.textPrimary)),
+        const PopupMenuItem(
+            value: 'edit',
+            height: 40,
+            child: _MenuItemText('编辑主机', Et.textPrimary)),
+        const PopupMenuItem(
+            value: 'delete',
+            height: 40,
+            child: _MenuItemText('删除主机', Color(0xFFD1242F))),
+      ],
+    ).then((v) {
+      if (!mounted || v == null) return;
+      switch (v) {
+        case 'connect':
+          _connect(h);
+        case 'edit':
+          _editHost(h);
+        case 'delete':
+          _confirmDelete(h);
+      }
+    });
   }
 
   @override
@@ -110,22 +201,32 @@ class _HostsPageState extends State<HostsPage> {
                               controller: _search,
                               style: const TextStyle(
                                   fontSize: 13.5, color: Et.textPrimary),
+                              // 回车：唯一匹配直接连接
+                              onSubmitted: (_) =>
+                                  exact == null ? null : _connect(exact),
                               decoration: const InputDecoration(
-                                hintText: '查找主机或 user@hostname…',
+                                hintText: '查找主机或 user@hostname…（回车连接唯一匹配）',
                                 border: InputBorder.none,
                                 isDense: true,
                               ),
                             ),
                           ),
+                          if (_search.text.isNotEmpty)
+                            InkWell(
+                              onTap: () {
+                                _search.clear();
+                                setState(() => _groupFilter = null);
+                              },
+                              child: const Icon(Icons.close,
+                                  size: 16, color: Et.textSecondary),
+                            ),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   FilledButton(
-                    onPressed: exact == null
-                        ? null
-                        : () => _connect(exact),
+                    onPressed: exact == null ? null : () => _connect(exact),
                     style: FilledButton.styleFrom(
                       backgroundColor: Et.primaryBtn,
                       disabledBackgroundColor: const Color(0xFFC9CBD3),
@@ -170,50 +271,22 @@ class _HostsPageState extends State<HostsPage> {
                 ],
               ),
               const SizedBox(height: 8),
+              // 同步进度细条
+              if (widget.app.loading)
+                const LinearProgressIndicator(
+                    minHeight: 2, color: Et.accent, backgroundColor: Colors.white),
               Expanded(
-                child: widget.app.error != null
-                    ? _CenterNote('同步失败: ${widget.app.error}')
-                    : _grid(groups: g, hosts: h),
+                child: widget.app.error == 'unauthorized'
+                    ? const SizedBox.shrink() // 壳层正在跳转登录页
+                    : widget.app.error != null
+                        ? _CenterNote('同步失败: ${widget.app.error}')
+                        : _grid(groups: g, hosts: h),
               ),
             ],
           ),
         );
       },
     );
-  }
-
-  Future<void> _confirmDelete(HostView h) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除主机',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Et.textPrimary)),
-        content: Text('将从你的 vault 中删除「${h.label}」（${h.username}@${h.hostname}），'
-            '关联的凭据一并下线。此操作会同步到所有设备。',
-            style: const TextStyle(fontSize: 13.5, color: Et.textSecondary)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9))),
-              child: const Text('删除')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await widget.app.deleteHost(h);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('删除失败: ${e.error}')));
-    }
   }
 
   Widget _viewToggle(IconData icon, bool active) => IconButton(
@@ -223,7 +296,8 @@ class _HostsPageState extends State<HostsPage> {
             color: active ? Et.textPrimary : const Color(0xFFB9BDC7)),
       );
 
-  Widget _grid({required List<GroupView> groups, required List<HostView> hosts}) {
+  Widget _grid(
+      {required List<GroupView> groups, required List<HostView> hosts}) {
     if (widget.app.loading && hosts.isEmpty) {
       return const _CenterNote('同步中…');
     }
@@ -253,8 +327,11 @@ class _HostsPageState extends State<HostsPage> {
               return _HostCard(
                 host: h,
                 groupName: widget.app.groupName(h.groupId),
+                open: widget.openHostIds.contains(h.id),
+                hasCredential: widget.app.credentialFor(h).available,
                 onTap: () => _connect(h),
-                onDelete: () => _confirmDelete(h),
+                onMenu: (anchorTopLeft, anchorSize) =>
+                    _cardMenu(h, anchorTopLeft, anchorSize),
               );
             },
           ),
@@ -282,6 +359,16 @@ class _HostsPageState extends State<HostsPage> {
       );
     });
   }
+}
+
+class _MenuItemText extends StatelessWidget {
+  const _MenuItemText(this.text, this.color);
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) =>
+      Text(text, style: TextStyle(fontSize: 13.5, color: color));
 }
 
 class _CenterNote extends StatelessWidget {
@@ -368,23 +455,57 @@ class _HostCard extends StatelessWidget {
   const _HostCard({
     required this.host,
     required this.groupName,
+    required this.open,
+    required this.hasCredential,
     required this.onTap,
-    required this.onDelete,
+    required this.onMenu,
   });
+
   final HostView host;
   final String? groupName;
+  final bool open; // 已有打开的终端标签
+  final bool hasCredential;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final void Function(Offset anchorTopLeft, Size anchorSize) onMenu;
+
+  void _menuAt(BuildContext buttonContext) {
+    final box = buttonContext.findRenderObject()! as RenderBox;
+    onMenu(box.localToGlobal(Offset.zero), box.size);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = ['ssh', if (host.username.isNotEmpty) host.username,
-      if (groupName != null) groupName].join(', ');
+    final subtitle = [
+      'ssh',
+      if (host.username.isNotEmpty) host.username,
+      if (groupName != null) groupName,
+    ].join(', ');
     return _Card(
       onTap: onTap,
+      onSecondaryTapUp: (d) => _menuAt(context),
+      onLongPress: () => _menuAt(context),
       child: Row(
         children: [
-          const _IconTile(color: Et.tileHost, icon: Icons.dns_rounded),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const _IconTile(color: Et.tileHost, icon: Icons.dns_rounded),
+              if (open)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    width: 11,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2DA44E),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -399,11 +520,14 @@ class _HostCard extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                         color: Et.textPrimary)),
                 const SizedBox(height: 3),
-                Text(subtitle,
+                Text(hasCredential ? subtitle : '$subtitle · 无凭据',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 12.5, color: Et.textSecondary)),
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        color: hasCredential
+                            ? Et.textSecondary
+                            : const Color(0xFFC77B27))),
               ],
             ),
           ),
@@ -411,36 +535,26 @@ class _HostCard extends StatelessWidget {
             icon: const Icon(Icons.more_horiz,
                 size: 18, color: Et.textSecondary),
             tooltip: '操作',
-            onPressed: () => _showMenu(context),
+            onPressed: () => _menuAt(context),
           ),
         ],
       ),
     );
   }
-
-  void _showMenu(BuildContext context) {
-    showMenu<String>(
-      context: context,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: const RelativeRect.fromLTRB(0, 0, 0, 0),
-      items: const [
-        PopupMenuItem(
-            value: 'delete',
-            height: 40,
-            child: Text('删除主机',
-                style: TextStyle(fontSize: 13.5, color: Color(0xFFD1242F)))),
-      ],
-    ).then((v) {
-      if (v == 'delete') onDelete();
-    });
-  }
 }
 
 class _Card extends StatelessWidget {
-  const _Card({required this.child, required this.onTap});
+  const _Card({
+    required this.child,
+    required this.onTap,
+    this.onSecondaryTapUp,
+    this.onLongPress,
+  });
+
   final Widget child;
   final VoidCallback onTap;
+  final void Function(TapUpDetails)? onSecondaryTapUp;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -449,6 +563,8 @@ class _Card extends StatelessWidget {
       borderRadius: BorderRadius.circular(Et.cardRadius),
       child: InkWell(
         onTap: onTap,
+        onSecondaryTapUp: onSecondaryTapUp,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(Et.cardRadius),
         child: Container(
           decoration: BoxDecoration(
