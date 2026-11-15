@@ -234,6 +234,10 @@ class AppState extends ChangeNotifier {
   Future<void> refresh() async {
     loading = true;
     error = null;
+    // 首次状态派发让出当前事件循环再执行（评审"附加观察 1"）：调用方常在 build 栈内
+    // 触发 refresh（HostsPage.initState），同步 notifyListeners 会于首帧 build 期间
+    // markNeedsBuild（debug 断言 + 该帧 build 中断）。延迟后派发，状态下一帧生效。
+    await Future<void>.delayed(Duration.zero);
     notifyListeners();
     try {
       var cursor = local.storeCursor().toInt();
@@ -251,6 +255,9 @@ class AppState extends ChangeNotifier {
       await bootstrap(); // 快照重建（保持单一数据源）
     } on ApiException catch (e) {
       error = e.status == 401 ? 'unauthorized' : e.error;
+    } catch (e) {
+      // 本地库 FFI 等非网络错误同样降级为同步失败横幅，不得逃逸成未处理异常
+      error = '$e';
     } finally {
       loading = false;
       notifyListeners();
