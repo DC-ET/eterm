@@ -1,6 +1,9 @@
 // 应用壳（Termius 式）：深色自绘标题栏（Vaults 胶囊 + 终端标签 + 关闭），
 // vault 视图 = 左侧导航 + 内容区；终端标签激活时满幅接管内容区（侧栏隐藏）。
+// 窄屏（手机竖屏，<720）响应式：侧边导航换成底部导航栏，内容区满幅。
 // IndexedStack 保持后台终端标签的会话存活。
+
+import 'dart:io' show Platform;
 
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
@@ -114,6 +117,7 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
     final content = switch (navIndex) {
       0 => HostsPage(
           app: widget.app,
@@ -127,20 +131,41 @@ class _ShellPageState extends State<ShellPage> {
       4 => const PlaceholderPage(title: 'Known Hosts', note: '主机键指纹校验（F4.4）随 M1 落地'),
       _ => const PlaceholderPage(title: 'Logs', note: '会话/审计日志随 M1 落地'),
     };
+    // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
+    final vaultView = compact
+        ? Column(
+            children: [
+              Expanded(child: content),
+              NavigationBar(
+                selectedIndex: _compactNavIndex(navIndex),
+                onDestinationSelected: (i) =>
+                    setState(() => navIndex = _compactNavTarget[i]),
+                height: 62,
+                backgroundColor: Et.sidebarBg,
+                indicatorColor: Et.sidebarSelected,
+                destinations: [
+                  for (final (icon, label) in _compactNav)
+                    NavigationDestination(
+                        icon: Icon(icon, size: 21), label: label),
+                ],
+              ),
+            ],
+          )
+        : Row(
+            children: [
+              _Sidebar(
+                navIndex: navIndex,
+                username: widget.username,
+                onSelect: (i) => setState(() => navIndex = i),
+                onLogout: _logout,
+              ),
+              Expanded(child: content),
+            ],
+          );
     final body = IndexedStack(
       index: activeTab + 1,
       children: [
-        Row(
-          children: [
-            _Sidebar(
-              navIndex: navIndex,
-              username: widget.username,
-              onSelect: (i) => setState(() => navIndex = i),
-              onLogout: _logout,
-            ),
-            Expanded(child: content),
-          ],
-        ),
+        vaultView,
         for (final t in tabs)
           TerminalTabView(
             key: t.key,
@@ -159,6 +184,7 @@ class _ShellPageState extends State<ShellPage> {
             username: widget.username,
             tabs: tabs,
             activeTab: activeTab,
+            compact: compact,
             onSelectVault: () => setState(() => activeTab = -1),
             onSelectTab: (i) => setState(() => activeTab = i),
             onCloseTab: closeTab,
@@ -173,6 +199,22 @@ class _ShellPageState extends State<ShellPage> {
   }
 }
 
+// ---------- 窄屏底部导航 ----------
+
+/// 手机底栏只收纳有实质功能的页（与侧栏 navIndex 对应：0/1/3/5）。
+const _compactNav = [
+  (Icons.dns_outlined, 'Hosts'),
+  (Icons.key_outlined, 'Keys'),
+  (Icons.code, 'Snippets'),
+  (Icons.history, 'Logs'),
+];
+const _compactNavTarget = [0, 1, 3, 5];
+
+int _compactNavIndex(int navIndex) {
+  final i = _compactNavTarget.indexOf(navIndex);
+  return i < 0 ? 0 : i;
+}
+
 // ---------- 标题栏 ----------
 
 class _TitleBar extends StatelessWidget {
@@ -184,6 +226,7 @@ class _TitleBar extends StatelessWidget {
     required this.onSelectTab,
     required this.onCloseTab,
     required this.onLogout,
+    this.compact = false,
   });
 
   final String username;
@@ -193,6 +236,7 @@ class _TitleBar extends StatelessWidget {
   final void Function(int) onSelectTab;
   final void Function(int) onCloseTab;
   final VoidCallback onLogout;
+  final bool compact; // 手机：无交通灯，让位区收窄
 
   @override
   Widget build(BuildContext context) {
@@ -202,7 +246,8 @@ class _TitleBar extends StatelessWidget {
       child: DragToMoveArea(
         child: Row(
           children: [
-            const SizedBox(width: 78), // 交通灯区
+            // 交通灯区：桌面端保留让位（窄窗也有交通灯），手机端不占
+            SizedBox(width: compact ? (Platform.isAndroid || Platform.isIOS ? 10 : 66) : 78),
             _VaultPill(username: username, onLogout: onLogout, onSelectVault: onSelectVault),
             const SizedBox(width: 10),
             for (var i = 0; i < tabs.length; i++)
@@ -211,6 +256,7 @@ class _TitleBar extends StatelessWidget {
                 active: activeTab == i,
                 onTap: () => onSelectTab(i),
                 onClose: () => onCloseTab(i),
+                maxLabelWidth: compact ? 84 : 160,
               ),
             const Spacer(),
             IconButton(
@@ -318,12 +364,14 @@ class _TermTabPill extends StatelessWidget {
     required this.active,
     required this.onTap,
     required this.onClose,
+    this.maxLabelWidth = 160,
   });
 
   final String label;
   final bool active;
   final VoidCallback onTap;
   final VoidCallback onClose;
+  final double maxLabelWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -344,7 +392,7 @@ class _TermTabPill extends StatelessWidget {
                 Icon(Icons.terminal, size: 15, color: Et.titleBarText.withAlpha(active ? 255 : 130)),
                 const SizedBox(width: 7),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 160),
+                  constraints: BoxConstraints(maxWidth: maxLabelWidth),
                   child: Text(label,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

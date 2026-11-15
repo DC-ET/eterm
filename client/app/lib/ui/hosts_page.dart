@@ -174,12 +174,14 @@ class _HostsPageState extends State<HostsPage> {
         final g = widget.app.groups;
         final h = _matched;
         final exact = h.length == 1 ? h.first : null;
+        final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
         return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+          padding:
+              EdgeInsets.fromLTRB(compact ? 14 : 20, 14, compact ? 14 : 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 搜索行
+              // 搜索行（手机：Connect 按钮不占位，回车连接唯一匹配仍可用）
               Row(
                 children: [
                   Expanded(
@@ -204,8 +206,10 @@ class _HostsPageState extends State<HostsPage> {
                               // 回车：唯一匹配直接连接
                               onSubmitted: (_) =>
                                   exact == null ? null : _connect(exact),
-                              decoration: const InputDecoration(
-                                hintText: '查找主机或 user@hostname…（回车连接唯一匹配）',
+                              decoration: InputDecoration(
+                                hintText: compact
+                                    ? '查找主机…'
+                                    : '查找主机或 user@hostname…（回车连接唯一匹配）',
                                 border: InputBorder.none,
                                 isDense: true,
                               ),
@@ -224,21 +228,23 @@ class _HostsPageState extends State<HostsPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: exact == null ? null : () => _connect(exact),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Et.primaryBtn,
-                      disabledBackgroundColor: const Color(0xFFC9CBD3),
-                      foregroundColor: Colors.white,
-                      disabledForegroundColor: Colors.white60,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(9)),
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      minimumSize: const Size(0, 40),
+                  if (!compact) ...[
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      onPressed: exact == null ? null : () => _connect(exact),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Et.primaryBtn,
+                        disabledBackgroundColor: const Color(0xFFC9CBD3),
+                        foregroundColor: Colors.white,
+                        disabledForegroundColor: Colors.white60,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9)),
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        minimumSize: const Size(0, 40),
+                      ),
+                      child: const Text('Connect'),
                     ),
-                    child: const Text('Connect'),
-                  ),
+                  ],
                 ],
               ),
               const SizedBox(height: 14),
@@ -265,9 +271,12 @@ class _HostsPageState extends State<HostsPage> {
                       backgroundColor: Colors.white,
                     ),
                   const Spacer(),
-                  _viewToggle(Icons.grid_view_rounded, true),
-                  _viewToggle(Icons.style_outlined, false),
-                  _viewToggle(Icons.keyboard_alt_outlined, false),
+                  // 视图切换为无功能占位，桌面展示、手机不占空间
+                  if (!compact) ...[
+                    _viewToggle(Icons.grid_view_rounded, true),
+                    _viewToggle(Icons.style_outlined, false),
+                    _viewToggle(Icons.keyboard_alt_outlined, false),
+                  ],
                 ],
               ),
               const SizedBox(height: 8),
