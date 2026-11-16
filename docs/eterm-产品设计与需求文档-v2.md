@@ -57,7 +57,7 @@
 └────────────────┘
 ```
 
-- **同步面**：客户端 ↔ 中枢。主机、组、密钥、Snippets、转发规则等配置数据的 CRUD 与增量同步。中枢是唯一事实源。
+- **同步面**：客户端 ↔ 中枢。主机、组、密钥、转发规则等配置数据的 CRUD 与增量同步。中枢是唯一事实源。
 - **数据面**：客户端 → 目标服务器，标准 SSH/SFTP 协议直连。**中枢永远不出现在数据面上**（默认；可选应急中转见 §10 待定项）。
 - 推论：客户端与目标同网时（家庭/办公内网），**中枢不在线也能连接**——离线可用性是 v1.0 Gateway 架构给不了的。
 
@@ -149,10 +149,8 @@ Vault(id, name, scope[personal|team], owner_id, logging_enabled, created_at)
 ├── SshKey(id, vault_id, label, key_type, private_enc, cert_enc, passphrase_enc,
 │          public_key, fingerprint, origin[generated|imported|fido2|biometric])
 ├── KnownHost(id, vault_id, hostname, key_type, key_enc, comment)
-├── PortRule(id, vault_id, host_id, label, kind[local|remote|dynamic],
-│            bind_addr, local_port, remote_host, remote_port, enabled)
-├── Snippet(id, vault_id, package_id, description, script, target_host_ids[], vars_json)
-└── SnippetPackage(id, vault_id, label)
+└── PortRule(id, vault_id, host_id, label, kind[local|remote|dynamic],
+            bind_addr, local_port, remote_host, remote_port, enabled)
 
 ── 中枢自有实体（不同步到客户端数据集） ──────────────────
 User(id, username, pwd_hash, created_at, locked_until)
@@ -210,12 +208,11 @@ rev BIGINT, updated_at, deleted_at, created_at
 **F5 连接进阶**【客户端】：跳板链（多级）、SOCKS5/HTTP 代理、Agent Forwarding（客户端内置 agent）、环境变量下发（SendEnv 语义 + 服务端 AcceptEnv 提示）、Startup Command。
 **F6 SFTP**【客户端】：双面板（本地 = 设备文件系统 / 远端）、拖拽、断点续传、传输队列与冲突处理、远端文件编辑回传。
 **F7 端口转发**【客户端】：Local/Remote/Dynamic 规则化、双击启停、客户端本地开监听（桌面可绑指定地址；Android 绑 loopback 供本机 App 使用）、端口占用预检。
-**F8 Snippets**【客户端 + 中枢同步】：描述+脚本、Package 组织、四种执行入口（Paste/Run/Autocomplete/批量）、**变量支持**（`{{host.label}}`、`{{input:name}}`、`{{select:a,b}}`、`{{env.X}}`——补 Termius 缺口）、多主机批量执行。
 **F9 导入导出**【中枢 API + 客户端 UI】：导入 `~/.ssh/config`（ProxyCommand 忽略并告知、JumpHost 转跳板链）、CSV；导出全量 JSON/YAML + `ssh_config`（反向可被 `ssh -F` 使用）。提供 CSV 模板（Termius 无官方导出，迁移第一摩擦）。
 **F10 会话日志**【客户端本地】：每 Host 留最近一条 + Bookmark；敏感掩码规则（口令提示不记录、正则脱敏）；导出单条日志；可选上报中枢（P2 再做上报）。
 **F11 Passkey/WebAuthn 登录**【中枢】：作为口令之外的登录方式。
 **F12 Autocomplete 与 Shell Integration**【客户端】
-- F12.1 补全数据源：命令历史（客户端本地库；随 Vault 同步为 P2 可选）、远端文件/目录路径（依赖 Shell Integration）、Snippet 名与内容、检测到口令提示时建议对应 Identity（sudo 场景）。
+- F12.1 补全数据源：命令历史（客户端本地库；随 Vault 同步为 P2 可选）、远端文件/目录路径（依赖 Shell Integration）、检测到口令提示时建议对应 Identity（sudo 场景）。
 - F12.2 Shell Integration 三态：`auto`（默认）/ `on` / `off`，Host/Group 级可配；`auto` 首次连接经**独立短连接**探测（不污染主会话），失败自动降级 `off` 并提示一次。
 - F12.3 降级损失仅限：工作目录显示、路径/历史补全、Workspaces 的目录恢复；终端本身完全可用。
 - F12.4 兼容性设计沿用 v1.0 §2.5 的教训：额外 exec 通道可能被收紧的 sshd 拒绝并直接断连（服务端需 `MaxSessions ≥ 2`）；三态 + 自动降级即为应对，探测失败不得影响主会话。
@@ -225,9 +222,9 @@ rev BIGINT, updated_at, deleted_at, created_at
 **F13 Workspaces**【客户端·桌面】：布局/连接/工作目录/运行命令快照模板；分屏 ≤16 + 广播输入。
 **F14 iOS 客户端**【客户端】：Flutter 代码库直接出 iOS，Rust core 复用。
 **F15 Web 壳**【中枢预留 + 客户端 WASM 路线评估】：见 §2.5，需先立项评审。
-**F16 AI（BYOK）**【客户端】：自带 Key、三个入口（命令生成/Snippet 生成/选区上下文）、**默认不发送任何终端内容**、发送前可编辑预览、应用 F10 掩码。
+**F16 AI（BYOK）**【客户端】：自带 Key、两个入口（命令生成/选区上下文）、**默认不发送任何终端内容**、发送前可编辑预览、应用 F10 掩码。
 **F17 审计**【中枢】：登录/设备变更/凭据查看导出/部署公钥等管理操作审计（append-only）；数据面连接行为由客户端上报（可选）。
-**F18 团队共享 Vault**：Editor/Viewer 两档、Snippet 跨 Vault 分享。
+**F18 团队共享 Vault**：Editor/Viewer 两档权限。
 **F19 FIDO2 / 生物识别密钥**：`sk-*` 由客户端在硬件上生成（直连架构下天然正确：YubiKey 插在 Mac/手机上）；SEP/TPM 生物识别密钥走平台通道。
 
 ---
@@ -239,7 +236,7 @@ rev BIGINT, updated_at, deleted_at, created_at
 | **M0 骨架** | 2~3 周 | **spike 三项：Flutter 中文 IME、russh 长会话、flutter_rust_bridge 双端编译**；中枢（认证+设备+数据 API+同步+**公网安全基线**）；Mac 客户端骨架（登录/同步/列表/终端） | 公网 VPS 上按 §7 基线上线；Mac 上同步主机列表并直连一台服务器跑命令；**停掉中枢进程，Mac 仍可连接** |
 | **M1 双端** | 2 周 | Android 客户端（含移动键盘条/手势）；Keychain 全量（生成/导入/导出/部署公钥/Identity） | 同一份数据两端无缝使用；手机免密直连 |
 | **M2 对齐** | 2~3 周 | 跳板链/代理、SFTP 双面板、端口转发、Group 继承/Tags 完整化 | 逐项核对 Termius 功能清单（用调研报告 §九反向验证），**此时可停订 Termius** |
-| **M3 迁移** | 2 周 | 导入导出（ssh_config/CSV）、Snippets+变量、会话日志、环境变量、Autocomplete（三态降级）、Passkey | 从 Termius 手工 CSV 迁入真实数据完成切换 |
+| **M3 迁移** | 2 周 | 导入导出（ssh_config/CSV）、会话日志、环境变量、Autocomplete（三态降级）、Passkey | 从 Termius 手工 CSV 迁入真实数据完成切换 |
 | **M4 增值** | 持续 | Workspaces/分屏广播、iOS、AI BYOK、审计、团队 Vault、FIDO2 | 按需启用 |
 
 **最大不确定性前移到 M0**：三个 spike 任一失败即触发技术栈复议（IME 失败 → 评估平台原生终端组件或 Tauri 路线），避免中后期返工。

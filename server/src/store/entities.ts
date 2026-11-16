@@ -184,29 +184,3 @@ register({
     }
   },
 });
-
-register({
-  type: "snippet",
-  table: "snippets",
-  cols: [
-    { name: "package_id", kind: ColKind.UuidNull, notNull: false },
-    { name: "description", kind: ColKind.Str, notNull: true },
-    { name: "script", kind: ColKind.Str, notNull: true },
-    { name: "target_host_ids", kind: ColKind.Json, notNull: true },
-    { name: "vars_json", kind: ColKind.JsonNull, notNull: false },
-  ],
-  validate: (m) => {
-    reqStr(m, ["description", "script"]);
-    limitLen(m, "script", 64 * 1024);
-  },
-});
-
-register({
-  type: "snippet_package",
-  table: "snippet_packages",
-  cols: [
-    { name: "label", kind: ColKind.Str, notNull: true },
-    { name: "sort", kind: ColKind.Int, notNull: true },
-  ],
-  validate: (m) => reqStr(m, ["label"]),
-});

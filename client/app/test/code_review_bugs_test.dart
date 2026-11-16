@@ -76,7 +76,7 @@ void main() {
       expect(find.text('Known Hosts'), findsOneWidget,
           reason: '手机底栏必须包含 Known Hosts 入口，否则 compact 布局不可达');
 
-      // 点入后路由切到侧栏 navIndex 4（KnownHostsPage）。
+      // 点入后路由切到侧栏 navIndex 3（KnownHostsPage）。
       // 页面实体渲染依赖本地库 FFI，测试环境（无 Rust）下 KnownHostsPage.initState 的
       // 错误路径会在 mount 中 setState（见评审"附加观察"1），故此处断言路由接线。
       await tester.tap(find.text('Known Hosts'));
@@ -84,7 +84,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         while (tester.takeException() != null) {}
       }
-      expect(shell.navIndex, 4, reason: '点入 Known Hosts 底栏项应切到 Known Hosts 页');
+      expect(shell.navIndex, 3, reason: '点入 Known Hosts 底栏项应切到 Known Hosts 页');
     },
   );
 

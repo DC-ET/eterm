@@ -217,23 +217,11 @@ CREATE TABLE port_rules (
   remote_host VARCHAR(255) NULL, remote_port SMALLINT UNSIGNED NULL,
   enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
-CREATE TABLE snippet_packages (
-  id BINARY(16) PRIMARY KEY, vault_id BINARY(16) NOT NULL,
-  label VARCHAR(128) NOT NULL, sort INT NOT NULL DEFAULT 0
-);
-CREATE TABLE snippets (
-  id BINARY(16) PRIMARY KEY, vault_id BINARY(16) NOT NULL,
-  package_id BINARY(16) NULL, description VARCHAR(255) NOT NULL,
-  script MEDIUMTEXT NOT NULL,
-  target_host_ids JSON NOT NULL,       -- uuid 数组
-  vars_json JSON NULL
-);
-
 -- 同步核心：append-only 变更表。rev = 本表自增 id，全局单调。
 CREATE TABLE changes (
   id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   entity_type ENUM('host_group','host','host_protocol','identity','ssh_key',
-                  'known_host','port_rule','snippet','snippet_package') NOT NULL,
+                  'known_host','port_rule') NOT NULL,
   entity_id   BINARY(16) NOT NULL,
   vault_id    BINARY(16) NOT NULL,
   actor_device BINARY(16) NULL,       -- 哪台设备产生的变更
@@ -257,7 +245,8 @@ CREATE TABLE audit_events (
 - **rev 分配**：push 事务内 `INSERT changes` 取得自增 id → 更新实体行 `rev = changes.id` → 同事务提交。读端 `pull` 按 `changes.id > cursor` 扫描，天然全局有序。
 - **`ssh_keys.key_version`**：私钥内容不可变（PRD §3.4 同步协议）。"修改私钥" = 新行（新 id）+ `superseded_by` 链；引用方（Identity/Host）更新指向。彻底消灭密钥并发写冲突。
 - `changes` 不存数据快照，pull 时按 `entity_id` 回查实体表当前状态——同实体高频修改天然去重，且避免快照膨胀。
-- `GROUP` 是保留字，表名用 `host_groups`；`snippets.target_host_ids` 为 JSON 数组，跨实体引用不做外键（同步系统的一致性由客户端 merge 逻辑保证，服务端仅校验类型）。
+- `GROUP` 是保留字，表名用 `host_groups`；跨实体引用（如 `host.group_id`、`identity.key_id`）不做外键（同步系统的一致性由客户端 merge 逻辑保证，服务端仅校验类型）。
+- `snippets`/`snippet_packages` 两表在已部署库中保留（Snippets 需求已移除，实体注册删除、不再同步；不删表、不写 ALTER 迁移，保持生产与新建库 schema 一致），`changes.entity_type` ENUM 中的 snippet 值同为保留兼容。
 - 单表容量评估：单人数百主机 + 日志外置，所有表远低于千万级，无需分区。
 
 ### 3.3 API 设计
@@ -278,7 +267,7 @@ CREATE TABLE audit_events (
 **push 语义**（服务端逐条处理，包在同一事务组不跨条）：
 1. `base_rev` 校验：客户端所见版本。`op=upsert` 且实体不存在 → 视为新建（`base_rev=0`）。
 2. 版本不符 → `conflict` + 附服务端当前 `server_data`；客户端按 **LWW（updated_at 字段级）** 合并后重推，最多 3 轮，仍冲突则入队人工处理（单用户场景几乎不发生）。
-3. 校验钩子按 `entity_type` 执行（如 Host：hostname 非空、port 1–65535、kind 合法枚举；Snippet：script ≤ 64KB）。
+3. 校验钩子按 `entity_type` 执行（如 Host：hostname 非空、port 1–65535、kind 合法枚举）。
 4. 成功 → upsert 实体行 + INSERT changes（`actor_device` 取认证上下文）→ 返回新 `rev`。
 5. `op=delete` → 置 `deleted_at` + 写 changes tombstone。
 
@@ -366,7 +355,6 @@ client/
 │   │   │   ├── keychain/         # Keys / Identities / KnownHosts
 │   │   │   ├── sftp/             # 双面板、传输队列
 │   │   │   ├── portfw/           # 转发规则
-│   │   │   ├── snippets/
 │   │   │   └── settings/         # 设备管理、同步状态、主题
 │   │   ├── data/                 # Rust bridge 的 Dart 封装（repository 层）
 │   │   └── ui/                   # 主题、通用组件
@@ -472,7 +460,7 @@ russh Channel ──► tokio task: 解析 SSH 消息 ──► mpsc channel
 - 输入：xterm.dart `onInput` → `ssh_write`；粘贴走 Bracketed Paste；OSC 52 剪贴板双向接入系统剪贴板。
 - **IME（M0 spike 焦点）**：自定义 `InputHandler` 接住 composing 事件，提交（commit）整段送入终端；验证拼音/日文连续输入与退格在 composing 期间的行为。不达标则切换备选：平台原生输入视图 overlay + 手动合成（预案 B，工作量 +1 周）。
 - resize：UI 尺寸变化 → 计算 cols/rows → `ssh_resize` → 远端 `SIGWINCH`。
-- 断线重连（PRD F3.4）：keepalive 15s×3 无响应判死 → 指数退避自动重建会话（复用 ConnectSpec）→ UI 顶部横幅提示"已重建，远端断线期间输出不可恢复"（不虚构 tmux 能力，Startup snippet 模板内置 `tmux attach` 建议）。环形缓冲保留断线前输出供回看，不重放进新会话。
+- 断线重连（PRD F3.4）：keepalive 15s×3 无响应判死 → 指数退避自动重建会话（复用 ConnectSpec）→ UI 顶部横幅提示"已重建，远端断线期间输出不可恢复"（不虚构 tmux 能力，Startup Command 模板内置 `tmux attach` 建议）。环形缓冲保留断线前输出供回看，不重放进新会话。
 - 会话三态灯：`ConnState` 流驱动（🟢 output 计数增量 / 🟡 检测到口令提示 pattern（与日志脱敏共用规则表）/ 🔴 exit|error）。
 
 ### 4.6 SFTP、端口转发、跳板链
@@ -605,7 +593,7 @@ S1–S3 为 M0 门禁（PRD §6），任一失败先走预案，预案也不可�
 
 **M2（2~3 周）**：跳板链 + 代理 + Agent Forwarding + 端口转发三类 + Group 继承完整化 + Tags/搜索 + 会话日志（本地）。出口：Termius 逐项核对（用调研报告 §九反向验证），可停订。
 
-**M3（2 周）**：导入导出（`ioconv/`：ssh_config/CSV 解析 + JSON/YAML/ssh_config 导出）+ Snippets 全量（变量/批量）+ 环境变量 + Autocomplete 与 Shell Integration（三态降级，依赖 S1 的 IME 成果）+ Passkey/WebAuthn + 脱敏回归。出口：Termius 真实数据迁入完成切换。
+**M3（2 周）**：导入导出（`ioconv/`：ssh_config/CSV 解析 + JSON/YAML/ssh_config 导出）+ 环境变量 + Autocomplete 与 Shell Integration（三态降级，依赖 S1 的 IME 成果）+ Passkey/WebAuthn + 脱敏回归。出口：Termius 真实数据迁入完成切换。
 
 **M4（持续）**：Workspaces/分屏广播、iOS 壳、AI BYOK、审计报表、团队 Vault、FIDO2/生物识别、metrics。
 

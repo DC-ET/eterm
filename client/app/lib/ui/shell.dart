@@ -18,7 +18,6 @@ import 'keychain_page.dart';
 import 'logs_page.dart';
 import 'known_hosts_page.dart';
 import 'port_forwarding_page.dart';
-import 'snippets_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
 import 'theme.dart';
@@ -138,8 +137,7 @@ class _ShellPageState extends State<ShellPage> {
         ),
       1 => KeychainPage(app: widget.app),
       2 => PortForwardingPage(app: widget.app),
-      3 => SnippetsPage(app: widget.app),
-      4 => const KnownHostsPage(),
+      3 => const KnownHostsPage(),
       _ => const LogsPage(),
     };
     // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
@@ -192,10 +190,9 @@ class _ShellPageState extends State<ShellPage> {
                   key: t.key,
                   host: t.host,
                   terminal: t.terminal,
-                  authKind: t.authKind,
-                  secret: t.secret,
-                  snippets: widget.app.snippets,
-                ),
+              authKind: t.authKind,
+              secret: t.secret,
+            ),
               ),
               // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
               if (compact)
@@ -252,16 +249,15 @@ class _ShellPageState extends State<ShellPage> {
 
 // ---------- 窄屏底部导航 ----------
 
-/// 手机底栏收纳全部实页 + Snippets（M2 占位），与侧栏 navIndex 对应：0/1/4/3/5。
-/// 评审 BUG-D1 回归：Known Hosts（侧栏 4）必须有手机入口，否则 compact 布局不可达。
+/// 手机底栏收纳全部实页，与侧栏 navIndex 对应：0/1/3/4。
+/// 评审 BUG-D1 回归：Known Hosts（侧栏 3）必须有手机入口，否则 compact 布局不可达。
 const _compactNav = [
   (Icons.dns_outlined, 'Hosts'),
   (Icons.key_outlined, 'Keys'),
   (Icons.fingerprint, 'Known Hosts'),
-  (Icons.code, 'Snippets'),
   (Icons.history, 'Logs'),
 ];
-const _compactNavTarget = [0, 1, 4, 3, 5];
+const _compactNavTarget = [0, 1, 3, 4];
 
 int _compactNavIndex(int navIndex) {
   final i = _compactNavTarget.indexOf(navIndex);
@@ -608,7 +604,6 @@ class _Sidebar extends StatelessWidget {
     (Icons.dns_outlined, 'Hosts'),
     (Icons.key_outlined, 'Keychain'),
     (Icons.compare_arrows, 'Port Forwarding'),
-    (Icons.code, 'Snippets'),
     (Icons.fingerprint, 'Known Hosts'),
     (Icons.history, 'Logs'),
   ];

@@ -146,6 +146,9 @@ CREATE TABLE port_rules (
   INDEX idx_pr_host (host_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Snippets 需求已移除（2026-11）：实体注册已删（server/src/store/entities.ts），
+-- 不再参与同步。两表保留不删——生产库与新建库 schema 保持一致，省一次破坏性迁移；
+-- changes.entity_type ENUM 中的 snippet 值同为保留兼容，服务端不会再写入。
 CREATE TABLE snippet_packages (
   id BINARY(16) PRIMARY KEY,
   vault_id BINARY(16) NOT NULL,

@@ -38,14 +38,6 @@ class KeyView {
   final List<String> usedBy; // 使用此密钥的主机 label
 }
 
-class SnippetView {
-  SnippetView({required this.id, required this.description, required this.script});
-
-  final String id;
-  final String description;
-  final String script;
-}
-
 /// 端口转发规则（port_rule 实体；M2 仅 local -L 生效，remote/dynamic 预留）。
 class PortRuleView {
   PortRuleView({
@@ -263,66 +255,6 @@ class AppState extends ChangeNotifier {
     await refresh();
   }
 
-  /// 片段视图（snippet 实体：description/script；package_id/target_host_ids/vars_json 暂不用）。
-  List<SnippetView> get snippets {
-    final list = <SnippetView>[];
-    for (final e in _entities.values) {
-      if (e['id'] == null || !e.keys.contains('script')) continue;
-      final id = e['id'] as String;
-      list.add(SnippetView(
-        id: id,
-        description: (e['description'] ?? id).toString(),
-        script: (e['script'] ?? '').toString(),
-      ));
-    }
-    list.sort((a, b) => a.description.toLowerCase().compareTo(b.description.toLowerCase()));
-    return list;
-  }
-
-  /// 新建/编辑片段。编辑时显式发送全部 wire 字段（服务端 push 部分更新语义，
-  /// 缺键不改列——见 AGENTS.md 契约）。
-  Future<void> saveSnippet({
-    SnippetView? existing,
-    required String description,
-    required String script,
-  }) async {
-    final data = <String, dynamic>{
-      'package_id': existing == null ? null : _entities['snippet/${existing.id}']?['package_id'],
-      'description': description,
-      'script': script,
-      'target_host_ids': <String>[],
-      'vars_json': null,
-    };
-    final change = existing == null
-        ? _upsert('snippet', _newUuid(), data)
-        : _update('snippet', existing.id, data);
-    final results = await api.push([change]);
-    final bad = results.where((r) => r['status'] != 'ok').toList();
-    if (bad.isNotEmpty) {
-      throw ApiException(200, '推送被拒: ${bad.map((r) => r['status']).join(",")}');
-    }
-    await refresh();
-  }
-
-  /// 删除片段（墓碑）。
-  Future<void> deleteSnippet(SnippetView s) async {
-    final e = _entities['snippet/${s.id}'];
-    if (e == null) return;
-    final results = await api.push([
-      {
-        'entity_type': 'snippet',
-        'entity_id': s.id,
-        'base_rev': (e['rev'] as num?)?.toInt() ?? 0,
-        'op': 'delete',
-      }
-    ]);
-    final bad = results.where((r) => r['status'] != 'ok').toList();
-    if (bad.isNotEmpty) {
-      throw ApiException(200, '删除被拒: ${bad.map((r) => r['status']).join(",")}');
-    }
-    await refresh();
-  }
-
   /// 端口转发规则视图（port_rule 实体：含 bind_addr 键）。
   List<PortRuleView> get portRules {
     final list = <PortRuleView>[];
@@ -345,7 +277,7 @@ class AppState extends ChangeNotifier {
     return list;
   }
 
-  /// 新建/编辑端口规则。编辑时显式发送全部 wire 字段（部分更新语义，见 saveSnippet）。
+  /// 新建/编辑端口规则。编辑时显式发送全部 wire 字段（部分更新语义，见 AGENTS.md wire 契约）。
   Future<void> savePortRule({
     PortRuleView? existing,
     required String hostId,
