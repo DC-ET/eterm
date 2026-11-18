@@ -1158,9 +1158,11 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
         TextFormField(
           controller: _pem,
           autocorrect: false,
+          // material_ui 断言 obscureText || maxLines == 1：隐藏态必须单行，
+          // 点「显示」后再展开多行（任务清单 #10）
           obscureText: _obscure,
-          minLines: 5,
-          maxLines: 8,
+          minLines: _obscure ? 1 : 5,
+          maxLines: _obscure ? 1 : 8,
           style: TextStyle(fontSize: 12.5, color: Et.textPrimary),
           decoration: _dec('私钥（OpenSSH / PKCS#8 PEM）').copyWith(
             suffixIcon: Row(
