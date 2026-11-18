@@ -31,26 +31,26 @@ class _KeychainPageState extends State<KeychainPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除密钥',
+        title: Text('删除密钥',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
         content: Text(
             '将从 vault 中删除密钥「${k.label}」（${k.keyType}）。此操作会同步到所有设备。',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFD1242F),
+                backgroundColor: Et.danger,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(9))),
             child: const Text('删除'),
@@ -66,26 +66,26 @@ class _KeychainPageState extends State<KeychainPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除凭据',
+        title: Text('删除凭据',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
         content: Text(
             '将从 vault 中删除凭据「${v.label}」（${v.username}）。此操作会同步到所有设备。',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFD1242F),
+                backgroundColor: Et.danger,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(9))),
             child: const Text('删除'),
@@ -170,14 +170,14 @@ class _KeychainPageState extends State<KeychainPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.key_outlined,
+                    Icon(Icons.key_outlined,
                         size: 17, color: Et.textSecondary),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         '密钥与凭据（Identity）存储在应用自有加密库中并同步到你的所有设备'
                         '（不经系统钥匙串）；主机认证时直接选用，公钥可一键部署到目标机。',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12.5,
                             height: 1.45,
                             color: Et.textSecondary),
@@ -191,7 +191,7 @@ class _KeychainPageState extends State<KeychainPage> {
                         label: const Text('生成密钥'),
                         style: FilledButton.styleFrom(
                           backgroundColor: Et.primaryBtn,
-                          foregroundColor: Colors.white,
+                          foregroundColor: Et.primaryBtnText,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(9)),
                           minimumSize: const Size(0, 38),
@@ -204,7 +204,7 @@ class _KeychainPageState extends State<KeychainPage> {
                         label: const Text('导入密钥'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Et.textPrimary,
-                          side: const BorderSide(color: Et.cardBorder),
+                          side: BorderSide(color: Et.cardBorder),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(9)),
                           minimumSize: const Size(0, 38),
@@ -283,7 +283,7 @@ class _KeychainPageState extends State<KeychainPage> {
               child: FloatingActionButton(
                 heroTag: 'keychain-add',
                 backgroundColor: Et.primaryBtn,
-                foregroundColor: Colors.white,
+                foregroundColor: Et.primaryBtnText,
                 elevation: 2,
                 onPressed: _showMobileMenu,
                 child: const Icon(Icons.add, size: 26),
@@ -297,7 +297,7 @@ class _KeychainPageState extends State<KeychainPage> {
   void _showMobileMenu() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: Et.card,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (sheetCtx) => SafeArea(
@@ -306,13 +306,13 @@ class _KeychainPageState extends State<KeychainPage> {
           children: [
             const SizedBox(height: 10),
             ListTile(
-              leading: const Icon(Icons.auto_awesome, color: Et.primaryBtn),
-              title: const Text('生成新密钥',
+              leading: Icon(Icons.auto_awesome, color: Et.primaryBtn),
+              title: Text('生成新密钥',
                   style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600,
                       color: Et.textPrimary)),
-              subtitle: const Text('在设备上生成 Ed25519 / ECDSA / RSA 密钥对',
+              subtitle: Text('在设备上生成 Ed25519 / ECDSA / RSA 密钥对',
                   style: TextStyle(fontSize: 12, color: Et.textSecondary)),
               onTap: () {
                 Navigator.pop(sheetCtx);
@@ -320,13 +320,13 @@ class _KeychainPageState extends State<KeychainPage> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.download, color: Et.primaryBtn),
-              title: const Text('导入密钥',
+              leading: Icon(Icons.download, color: Et.primaryBtn),
+              title: Text('导入密钥',
                   style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600,
                       color: Et.textPrimary)),
-              subtitle: const Text('粘贴 OpenSSH PEM 或选择文件',
+              subtitle: Text('粘贴 OpenSSH PEM 或选择文件',
                   style: TextStyle(fontSize: 12, color: Et.textSecondary)),
               onTap: () {
                 Navigator.pop(sheetCtx);
@@ -348,21 +348,21 @@ class _KeychainPageState extends State<KeychainPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Et.cardBorder),
               ),
-              child: const Icon(Icons.key_outlined,
+              child: Icon(Icons.key_outlined,
                   size: 30, color: Et.textSecondary),
             ),
             const SizedBox(height: 14),
-            const Text('还没有密钥',
+            Text('还没有密钥',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textPrimary)),
             const SizedBox(height: 5),
-            const Text('生成或导入密钥，主机认证时可直接选用',
+            Text('生成或导入密钥，主机认证时可直接选用',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
@@ -376,21 +376,21 @@ class _KeychainPageState extends State<KeychainPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Et.cardBorder),
               ),
-              child: const Icon(Icons.badge_outlined,
+              child: Icon(Icons.badge_outlined,
                   size: 30, color: Et.textSecondary),
             ),
             const SizedBox(height: 14),
-            const Text('还没有凭据（Identity）',
+            Text('还没有凭据（Identity）',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textPrimary)),
             const SizedBox(height: 5),
-            const Text('添加主机时自动创建；这里可查看与修改已有凭据',
+            Text('添加主机时自动创建；这里可查看与修改已有凭据',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
@@ -429,7 +429,7 @@ class _SectionToggle extends StatelessWidget {
     final active = section == i;
     return Expanded(
       child: Material(
-        color: active ? Colors.white : Colors.transparent,
+        color: active ? Et.card : Colors.transparent,
         borderRadius: BorderRadius.circular(7),
         child: InkWell(
           borderRadius: BorderRadius.circular(7),
@@ -509,7 +509,7 @@ class _IdentityCard extends StatelessWidget {
                     Text('${item.label}（${item.username}）',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
@@ -520,7 +520,7 @@ class _IdentityCard extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 12,
                             color: keyMissing
-                                ? const Color(0xFFD1242F)
+                                ? Et.danger
                                 : item.usedBy.isEmpty
                                     ? Et.textSecondary
                                     : const Color(0xFF2DA44E))),
@@ -536,12 +536,12 @@ class _IdentityCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(item.authKindText,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 11, color: Et.textSecondary)),
               ),
               if (onDelete != null)
                 IconButton(
-                  icon: const Icon(Icons.delete_outline,
+                  icon: Icon(Icons.delete_outline,
                       size: 18, color: Et.textSecondary),
                   tooltip: '删除凭据',
                   onPressed: onDelete,
@@ -623,22 +623,22 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
       actions: [
         TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
             backgroundColor: Et.primaryBtn,
-            foregroundColor: Colors.white,
+            foregroundColor: Et.primaryBtnText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
             minimumSize: const Size(0, 42),
           ),
           child: _busy
-              ? const SizedBox(
+              ? SizedBox(
                   height: 16,
                   width: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Et.primaryBtnText))
               : const Text('保存并同步'),
         ),
       ],
@@ -646,7 +646,7 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
         TextFormField(
           controller: _username,
           autocorrect: false,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('用户名'),
         ),
         const SizedBox(height: 12),
@@ -677,14 +677,14 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
             controller: _password,
             obscureText: true,
             autocorrect: false,
-            style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+            style: TextStyle(fontSize: 14, color: Et.textPrimary),
             decoration: _dec(widget.item.hasPassword ? '新口令（留空保留原口令）' : '口令'),
           )
         else ...[
           DropdownButtonFormField<String>(
             initialValue: _keyId,
-            dropdownColor: Colors.white,
-            style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+            dropdownColor: Et.card,
+            style: TextStyle(fontSize: 14, color: Et.textPrimary),
             decoration: _dec('选择 Keychain 密钥'),
             items: [
               for (final k in keys)
@@ -692,22 +692,22 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
                     value: k.id,
                     child: Text('${k.label}（${k.keyType}）',
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 14, color: Et.textPrimary))),
             ],
             onChanged: (v) => setState(() => _keyId = v),
           ),
           if (widget.app.identityKeyMissing(widget.item)) ...[
             const SizedBox(height: 6),
-            const Text('原密钥已不存在（可能在其他设备上被删除），请重新选择。',
-                style: TextStyle(fontSize: 12, color: Color(0xFFD1242F))),
+            Text('原密钥已不存在（可能在其他设备上被删除），请重新选择。',
+                style: TextStyle(fontSize: 12, color: Et.danger)),
           ],
         ],
         if (_error != null) ...[
           const SizedBox(height: 10),
           Text('保存失败: $_error',
               style:
-                  const TextStyle(fontSize: 12.5, color: Color(0xFFD1242F))),
+                  TextStyle(fontSize: 12.5, color: Et.danger)),
         ],
         const SizedBox(height: 16),
       ],
@@ -732,7 +732,7 @@ class _AuthKindOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? const Color(0xFFE8F0FE) : Colors.white,
+      color: selected ? Et.mSelected : Et.card,
       borderRadius: BorderRadius.circular(9),
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
@@ -804,7 +804,7 @@ class _KeyCard extends StatelessWidget {
                     Text(item.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
@@ -829,12 +829,12 @@ class _KeyCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(item.keyType,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 11, color: Et.textSecondary)),
               ),
               if (onDelete != null)
                 IconButton(
-                  icon: const Icon(Icons.delete_outline,
+                  icon: Icon(Icons.delete_outline,
                       size: 18, color: Et.textSecondary),
                   tooltip: '删除密钥',
                   onPressed: onDelete,
@@ -877,14 +877,14 @@ class _DialogShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+      backgroundColor: Et.card,
+      surfaceTintColor: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
       contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
       actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
       title: Text(title,
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 18, fontWeight: FontWeight.w700, color: Et.textPrimary)),
       content: SizedBox(
         width: width,
@@ -903,7 +903,7 @@ class _DialogShell extends StatelessWidget {
 
 InputDecoration _dec(String label) => InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(fontSize: 13, color: Et.textSecondary),
+      labelStyle: TextStyle(fontSize: 13, color: Et.textSecondary),
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     );
@@ -979,22 +979,22 @@ class _GenerateKeyDialogState extends State<_GenerateKeyDialog> {
       actions: [
         TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
             backgroundColor: Et.primaryBtn,
-            foregroundColor: Colors.white,
+            foregroundColor: Et.primaryBtnText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
             minimumSize: const Size(0, 42),
           ),
           child: _busy
-              ? const SizedBox(
+              ? SizedBox(
                   height: 16,
                   width: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Et.primaryBtnText))
               : const Text('生成并同步'),
         ),
       ],
@@ -1003,21 +1003,21 @@ class _GenerateKeyDialogState extends State<_GenerateKeyDialog> {
           controller: _label,
           autofocus: true,
           autocorrect: false,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('名称'),
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           initialValue: _algorithm,
-          dropdownColor: Colors.white,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          dropdownColor: Et.card,
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('算法'),
           items: [
             for (final (value, label) in _algorithms)
               DropdownMenuItem(
                   value: value,
                   child: Text(label,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 14, color: Et.textPrimary))),
           ],
           onChanged: _busy ? null : (v) => setState(() => _algorithm = v!),
@@ -1026,7 +1026,7 @@ class _GenerateKeyDialogState extends State<_GenerateKeyDialog> {
         TextFormField(
           controller: _comment,
           autocorrect: false,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('备注（可选，如 user@host）'),
         ),
         const SizedBox(height: 8),
@@ -1034,13 +1034,13 @@ class _GenerateKeyDialogState extends State<_GenerateKeyDialog> {
           _algorithm == 'ed25519'
               ? 'OpenSSH 格式 · 生成后自动同步到所有设备'
               : 'PKCS#8 格式 · ${_algorithm.startsWith("rsa") ? "生成需要数秒" : "生成后"}自动同步到所有设备',
-          style: const TextStyle(fontSize: 12, color: Et.textSecondary),
+          style: TextStyle(fontSize: 12, color: Et.textSecondary),
         ),
         if (_error != null) ...[
           const SizedBox(height: 10),
           Text('生成失败: $_error',
               style:
-                  const TextStyle(fontSize: 12.5, color: Color(0xFFD1242F))),
+                  TextStyle(fontSize: 12.5, color: Et.danger)),
         ],
         const SizedBox(height: 16),
       ],
@@ -1128,22 +1128,22 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
       actions: [
         TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
             backgroundColor: Et.primaryBtn,
-            foregroundColor: Colors.white,
+            foregroundColor: Et.primaryBtnText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
             minimumSize: const Size(0, 42),
           ),
           child: _busy
-              ? const SizedBox(
+              ? SizedBox(
                   height: 16,
                   width: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Et.primaryBtnText))
               : const Text('导入并同步'),
         ),
       ],
@@ -1151,7 +1151,7 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
         TextFormField(
           controller: _label,
           autocorrect: false,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('名称'),
         ),
         const SizedBox(height: 12),
@@ -1161,19 +1161,19 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
           obscureText: _obscure,
           minLines: 5,
           maxLines: 8,
-          style: const TextStyle(fontSize: 12.5, color: Et.textPrimary),
+          style: TextStyle(fontSize: 12.5, color: Et.textPrimary),
           decoration: _dec('私钥（OpenSSH / PKCS#8 PEM）').copyWith(
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.content_paste,
+                  icon: Icon(Icons.content_paste,
                       size: 17, color: Et.textSecondary),
                   tooltip: '粘贴',
                   onPressed: _pastePem,
                 ),
                 IconButton(
-                  icon: const Icon(Icons.folder_open,
+                  icon: Icon(Icons.folder_open,
                       size: 17, color: Et.textSecondary),
                   tooltip: '选择文件',
                   onPressed: _pickFile,
@@ -1190,13 +1190,13 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
           ),
         ),
         const SizedBox(height: 8),
-        const Text('口令加密的私钥暂不支持；导入时会校验并提取类型与指纹',
+        Text('口令加密的私钥暂不支持；导入时会校验并提取类型与指纹',
             style: TextStyle(fontSize: 12, color: Et.textSecondary)),
         if (_error != null) ...[
           const SizedBox(height: 10),
           Text('导入失败: $_error',
               style:
-                  const TextStyle(fontSize: 12.5, color: Color(0xFFD1242F))),
+                  TextStyle(fontSize: 12.5, color: Et.danger)),
         ],
         const SizedBox(height: 16),
       ],
@@ -1259,9 +1259,9 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
     final newLabel = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('重命名密钥',
+        title: Text('重命名密钥',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -1270,19 +1270,19 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
           controller: controller,
           autofocus: true,
           autocorrect: false,
-          style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+          style: TextStyle(fontSize: 14, color: Et.textPrimary),
           decoration: _dec('名称'),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+              child: Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () =>
                   Navigator.pop(context, controller.text.trim()),
               style: FilledButton.styleFrom(
                   backgroundColor: Et.primaryBtn,
-                  foregroundColor: Colors.white,
+                  foregroundColor: Et.primaryBtnText,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('保存')),
@@ -1298,25 +1298,25 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('导出私钥',
+        title: Text('导出私钥',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
-        content: const Text(
+        content: Text(
             '私钥全文将复制到剪贴板。剪贴板可能被其他应用读取，用完后建议覆盖或清空。',
             style: TextStyle(fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+              child: Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFB35900),
-                  foregroundColor: Colors.white,
+                  foregroundColor: Et.primaryBtnText,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('复制私钥')),
@@ -1354,10 +1354,10 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
       actions: [
         TextButton(
             onPressed: _busy ? null : _rename,
-            child: const Text('重命名', style: TextStyle(color: Et.textSecondary))),
+            child: Text('重命名', style: TextStyle(color: Et.textSecondary))),
         TextButton(
             onPressed: _busy ? null : _exportPem,
-            child: const Text('导出私钥', style: TextStyle(color: Et.textSecondary))),
+            child: Text('导出私钥', style: TextStyle(color: Et.textSecondary))),
         if (k.usedBy.isEmpty)
           TextButton(
               onPressed: _busy
@@ -1366,7 +1366,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
                       Navigator.pop(context); // 先关详情，删除确认再叠上来
                       await widget.onDelete(k);
                     },
-              style: TextButton.styleFrom(foregroundColor: const Color(0xFFD1242F)),
+              style: TextButton.styleFrom(foregroundColor: Et.danger),
               child: const Text('删除')),
         FilledButton.icon(
           // 旧版密钥无公钥内容：部署必假成功，禁用（评审 P1）
@@ -1375,7 +1375,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
           label: const Text('部署公钥'),
           style: FilledButton.styleFrom(
             backgroundColor: Et.primaryBtn,
-            foregroundColor: Colors.white,
+            foregroundColor: Et.primaryBtnText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
             minimumSize: const Size(0, 42),
@@ -1403,7 +1403,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
                   ),
                   const SizedBox(height: 4),
                   Text('来源：${k.origin == 'generated' ? '本应用生成' : '导入'}',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12, color: Et.textSecondary)),
                 ],
               ),
@@ -1416,7 +1416,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
               ),
               child: Text(k.keyType,
                   style:
-                      const TextStyle(fontSize: 11, color: Et.textSecondary)),
+                      TextStyle(fontSize: 11, color: Et.textSecondary)),
             ),
           ],
         ),
@@ -1430,7 +1430,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
           const SizedBox(height: 10),
           Text('操作失败: $_error',
               style:
-                  const TextStyle(fontSize: 12.5, color: Color(0xFFD1242F))),
+                  TextStyle(fontSize: 12.5, color: Et.danger)),
         ],
         const SizedBox(height: 18),
       ],
@@ -1451,21 +1451,21 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
           SizedBox(
             width: 44,
             child: Text(label,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textSecondary)),
           ),
           Expanded(
             child: SelectableText(value,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 12.5, height: 1.4, color: Et.textPrimary)),
           ),
           if (onCopy != null)
             InkWell(
               onTap: onCopy,
               borderRadius: BorderRadius.circular(8),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(4),
                 child: Icon(Icons.copy, size: 15, color: Et.textSecondary),
               ),
@@ -1487,13 +1487,13 @@ class _DeployHostPickerDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final hosts = app.hosts;
     return AlertDialog(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+      backgroundColor: Et.card,
+      surfaceTintColor: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 4),
       contentPadding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       actionsPadding: const EdgeInsets.fromLTRB(24, 4, 24, 14),
-      title: const Text('部署公钥到目标机',
+      title: Text('部署公钥到目标机',
           style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -1502,7 +1502,7 @@ class _DeployHostPickerDialog extends StatelessWidget {
         width: 420,
         height: hosts.isEmpty ? 120 : 320,
         child: hosts.isEmpty
-            ? const Center(
+            ? Center(
                 child: Text('还没有主机',
                     style: TextStyle(fontSize: 13, color: Et.textSecondary)),
               )
@@ -1519,16 +1519,16 @@ class _DeployHostPickerDialog extends StatelessWidget {
                         size: 20,
                         color: usable ? Et.primaryBtn : Et.textSecondary),
                     title: Text(h.label,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
                     subtitle: Text('${h.username}@${h.hostname}:${h.port}',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12, color: Et.textSecondary)),
                     trailing: usable
                         ? null
-                        : const Text('无凭据',
+                        : Text('无凭据',
                             style: TextStyle(
                                 fontSize: 11, color: Et.textSecondary)),
                     onTap:
@@ -1540,7 +1540,7 @@ class _DeployHostPickerDialog extends StatelessWidget {
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
       ],
     );
   }

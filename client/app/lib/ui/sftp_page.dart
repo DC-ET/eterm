@@ -286,29 +286,29 @@ class _SftpPageState extends State<SftpPage> {
     return showDialog<ConflictAction>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('「$name」已存在',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
-        content: const Text('目标侧已有同名文件，如何处理？',
+        content: Text('目标侧已有同名文件，如何处理？',
             style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.skip),
-              child: const Text('跳过',
+              child: Text('跳过',
                   style: TextStyle(color: Et.textSecondary))),
           TextButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.rename),
-              child: const Text('自动改名',
+              child: Text('自动改名',
                   style: TextStyle(color: Et.textPrimary))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.overwrite),
               style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
+                  backgroundColor: Et.danger,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('覆盖')),
@@ -540,9 +540,9 @@ class _SftpPageState extends State<SftpPage> {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除',
+        title: Text('删除',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -555,17 +555,17 @@ class _SftpPageState extends State<SftpPage> {
                 : (isDir
                     ? '删除本地空目录「$name」？（目录须为空）'
                     : '删除本地文件「$name」？不可恢复。'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
               style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
+                  backgroundColor: Et.danger,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('删除')),
@@ -585,10 +585,10 @@ class _SftpPageState extends State<SftpPage> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(title,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
@@ -601,7 +601,7 @@ class _SftpPageState extends State<SftpPage> {
           TextButton(
               onPressed: () => Navigator.pop(ctx),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
               style: FilledButton.styleFrom(
@@ -632,14 +632,14 @@ class _SftpPageState extends State<SftpPage> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
                   child: Row(children: [
-                    const Text('传输队列',
+                    Text('传输队列',
                         style: TextStyle(
                             fontSize: 15.5,
                             fontWeight: FontWeight.w700,
                             color: Et.textPrimary)),
                     const SizedBox(width: 8),
                     Text('${q.activeCount} 个进行中',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12, color: Et.textSecondary)),
                     const Spacer(),
                     TextButton(
@@ -648,7 +648,7 @@ class _SftpPageState extends State<SftpPage> {
                             style: TextStyle(fontSize: 13))),
                   ]),
                 ),
-                const Divider(height: 1, color: Et.cardBorder),
+                Divider(height: 1, color: Et.cardBorder),
                 Expanded(child: _queueList(q)),
               ],
             ),
@@ -660,7 +660,7 @@ class _SftpPageState extends State<SftpPage> {
 
   Widget _queueList(SftpTransferQueue q) {
     if (q.jobs.isEmpty) {
-      return const Center(
+      return Center(
           child: Text('暂无传输任务',
               style: TextStyle(fontSize: 13, color: Et.textSecondary)));
     }
@@ -686,8 +686,8 @@ class _SftpPageState extends State<SftpPage> {
     return Scaffold(
       backgroundColor: Et.contentBg,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+        backgroundColor: Et.card,
+        surfaceTintColor: Et.card,
         elevation: 0.5,
         foregroundColor: Et.textPrimary,
         title: Column(
@@ -701,7 +701,7 @@ class _SftpPageState extends State<SftpPage> {
                 : '$_rpath · 本地 ${_lpath ?? "未选择"}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 11,
                     fontFamily: 'Menlo',
                     color: Et.textSecondary)),
@@ -775,7 +775,7 @@ class _SftpPageState extends State<SftpPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Text(_reason ?? '连接失败',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 13, color: Et.textSecondary)),
               ),
               const SizedBox(height: 12),
@@ -785,7 +785,7 @@ class _SftpPageState extends State<SftpPage> {
                 label: const Text('重试'),
                 style: FilledButton.styleFrom(
                     backgroundColor: Et.primaryBtn,
-                    foregroundColor: Colors.white),
+                    foregroundColor: Et.primaryBtnText),
               ),
             ],
           ),
@@ -799,7 +799,7 @@ class _SftpPageState extends State<SftpPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(child: _remotePanel()),
-        const VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
+        VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
         Expanded(child: _localPanel()),
       ],
     );
@@ -837,18 +837,18 @@ class _SftpPageState extends State<SftpPage> {
       required String path,
       required List<Widget> actions}) {
     return Container(
-      color: Colors.white,
+      color: Et.card,
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
       child: Row(children: [
         Text(title,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13, fontWeight: FontWeight.w700, color: Et.textPrimary)),
         const SizedBox(width: 10),
         Expanded(
           child: Text(path,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11.5,
                   fontFamily: 'Menlo',
                   color: Et.textSecondary)),
@@ -864,10 +864,10 @@ class _SftpPageState extends State<SftpPage> {
         IconButton(
           onPressed: _list,
           tooltip: '刷新',
-          icon: const Icon(Icons.refresh, size: 19, color: Et.textSecondary),
+          icon: Icon(Icons.refresh, size: 19, color: Et.textSecondary),
         ),
       ]),
-      const Divider(height: 1, color: Et.cardBorder),
+      Divider(height: 1, color: Et.cardBorder),
       Expanded(child: _remoteList()),
     ]);
   }
@@ -883,16 +883,16 @@ class _SftpPageState extends State<SftpPage> {
               IconButton(
                 onPressed: _pickLocalRoot,
                 tooltip: '选择本地目录',
-                icon: const Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
+                icon: Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
               ),
             IconButton(
               onPressed: _mkdirLocal,
               tooltip: '新建文件夹（本地）',
-              icon: const Icon(Icons.create_new_folder_outlined,
+              icon: Icon(Icons.create_new_folder_outlined,
                   size: 19, color: Et.textSecondary),
             ),
           ]),
-      const Divider(height: 1, color: Et.cardBorder),
+      Divider(height: 1, color: Et.cardBorder),
       Expanded(child: _localList()),
     ]);
   }
@@ -908,7 +908,7 @@ class _SftpPageState extends State<SftpPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading: const Icon(Icons.arrow_upward,
+            leading: Icon(Icons.arrow_upward,
                 size: 20, color: Et.textSecondary),
             title: const Text('..',
                 style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
@@ -953,7 +953,7 @@ class _SftpPageState extends State<SftpPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('先选择一个本地目录',
+            Text('先选择一个本地目录',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
             const SizedBox(height: 10),
             FilledButton.icon(
@@ -962,7 +962,7 @@ class _SftpPageState extends State<SftpPage> {
               label: const Text('选择目录'),
               style: FilledButton.styleFrom(
                   backgroundColor: Et.primaryBtn,
-                  foregroundColor: Colors.white),
+                  foregroundColor: Et.primaryBtnText),
             ),
           ],
         ),
@@ -977,7 +977,7 @@ class _SftpPageState extends State<SftpPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading: const Icon(Icons.arrow_upward,
+            leading: Icon(Icons.arrow_upward,
                 size: 20, color: Et.textSecondary),
             title: const Text('..',
                 style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
@@ -1020,7 +1020,7 @@ class _SftpPageState extends State<SftpPage> {
             if (spinner) const SizedBox(height: 10),
             Text(text,
                 style:
-                    const TextStyle(fontSize: 13, color: Et.textSecondary)),
+                    TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
       );
@@ -1074,11 +1074,11 @@ class _FileRow extends StatelessWidget {
       subtitle: Text(meta,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11.5, color: Et.textSecondary)),
+          style: TextStyle(fontSize: 11.5, color: Et.textSecondary)),
       trailing: PopupMenuButton<int>(
-        color: Colors.white,
+        color: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        icon: const Icon(Icons.more_vert, size: 19, color: Et.textSecondary),
+        icon: Icon(Icons.more_vert, size: 19, color: Et.textSecondary),
         onSelected: (v) => actions[v].onTap(),
         itemBuilder: (_) => [
           for (var i = 0; i < actions.length; i++)
@@ -1089,14 +1089,14 @@ class _FileRow extends StatelessWidget {
                 Icon(actions[i].icon,
                     size: 17,
                     color: actions[i].destructive
-                        ? const Color(0xFFD1242F)
+                        ? Et.danger
                         : Et.textSecondary),
                 const SizedBox(width: 8),
                 Text(actions[i].label,
                     style: TextStyle(
                         fontSize: 13.5,
                         color: actions[i].destructive
-                            ? const Color(0xFFD1242F)
+                            ? Et.danger
                             : Et.textPrimary)),
               ]),
             ),
@@ -1120,7 +1120,7 @@ class _QueueRow extends StatelessWidget {
       (SftpJobState.queued) => ('排队中', Et.textSecondary, Icons.hourglass_empty),
       (SftpJobState.running) => ('传输中', const Color(0xFF2C63D9), Icons.sync),
       (SftpJobState.done) => ('完成', const Color(0xFF1A7F37), Icons.check_circle_outline),
-      (SftpJobState.failed) => ('失败', const Color(0xFFD1242F), Icons.error_outline),
+      (SftpJobState.failed) => ('失败', Et.danger, Icons.error_outline),
       (SftpJobState.canceled) => ('已取消', Et.textSecondary, Icons.cancel_outlined),
     };
     final total = job.total;
@@ -1139,7 +1139,7 @@ class _QueueRow extends StatelessWidget {
             child: Text(job.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                     fontFamily: 'Menlo', fontSize: 13, color: Et.textPrimary)),
           ),
           Icon(icon, size: 15, color: color),
@@ -1150,7 +1150,7 @@ class _QueueRow extends StatelessWidget {
             IconButton(
               onPressed: onCancel,
               tooltip: '取消',
-              icon: const Icon(Icons.close, size: 18, color: Et.textSecondary),
+              icon: Icon(Icons.close, size: 18, color: Et.textSecondary),
             )
           else if (job.state == SftpJobState.failed ||
               job.state == SftpJobState.canceled)
@@ -1173,15 +1173,15 @@ class _QueueRow extends StatelessWidget {
             total > 0
                 ? '${_fmtSize(job.transferred)}/${_fmtSize(total)}'
                 : '传输中…',
-            style: const TextStyle(fontSize: 11, color: Et.textSecondary),
+            style: TextStyle(fontSize: 11, color: Et.textSecondary),
           ),
         ],
         if (job.error != null && job.state == SftpJobState.failed)
           Text(job.error!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 11, color: Color(0xFFD1242F))),
+              style: TextStyle(
+                  fontSize: 11, color: Et.danger)),
       ]),
     );
   }

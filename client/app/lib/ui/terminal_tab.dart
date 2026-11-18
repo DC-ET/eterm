@@ -269,7 +269,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   void _showPasteMenu() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: Et.card,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (sheetCtx) => SafeArea(
@@ -278,8 +278,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
           children: [
             const SizedBox(height: 10),
             ListTile(
-              leading: const Icon(Icons.content_paste, color: Et.primaryBtn),
-              title: const Text('粘贴到终端',
+              leading: Icon(Icons.content_paste, color: Et.primaryBtn),
+              title: Text('粘贴到终端',
                   style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600,
@@ -290,8 +290,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.swap_vert, color: Et.primaryBtn),
-              title: const Text('重排键条',
+              leading: Icon(Icons.swap_vert, color: Et.primaryBtn),
+              title: Text('重排键条',
                   style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600,
@@ -345,7 +345,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   Future<void> _showExtraKeysOrderSheet() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: Et.card,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (_) => const _ExtraKeysOrderSheet(),
@@ -360,7 +360,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
       child: SafeArea(
         bottom: false,
         child: Container(
-      color: Et.termBg,
+      color: Et.termTheme.background,
       padding: const EdgeInsets.fromLTRB(8, 6, 0, 0),
       child: Column(
         children: [
@@ -375,8 +375,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                       _term,
                       autofocus: true,
                       focusNode: _focus,
-                      theme: termLightTheme,
-                      keyboardAppearance: Brightness.light,
+                      theme: Et.termTheme,
+                      keyboardAppearance: Et.brightness,
                       padding: const EdgeInsets.only(left: 10, top: 8),
                       textStyle: TerminalStyle(
                           fontSize: fontSize, fontFamily: _monoFont),
@@ -425,7 +425,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                   },
                 ),
                 if (_phase == _TermPhase.connecting)
-                  const Positioned.fill(
+                  Positioned.fill(
                     child: IgnorePointer(
                       child: Center(
                         child: Column(
@@ -462,7 +462,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                           label: const Text('重新连接'),
                           style: FilledButton.styleFrom(
                             backgroundColor: Et.primaryBtn,
-                            foregroundColor: Colors.white,
+                            foregroundColor: Et.primaryBtnText,
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(9)),
                             minimumSize: const Size(0, 40),
@@ -535,7 +535,7 @@ class _ExtraKeysBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 44,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Et.mBg,
         border: Border(top: BorderSide(color: Et.cardBorder)),
       ),
@@ -629,7 +629,7 @@ class _ExtraKeysOrderSheetState extends State<_ExtraKeysOrderSheet> {
             Row(
               children: [
                 const SizedBox(width: 18),
-                const Text('重排键条',
+                Text('重排键条',
                     style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -638,7 +638,7 @@ class _ExtraKeysOrderSheetState extends State<_ExtraKeysOrderSheet> {
                 TextButton(
                   onPressed: () =>
                       setState(() => _order = List.of(TerminalPrefs.defaultExtraKeys)),
-                  child: const Text('重置默认',
+                  child: Text('重置默认',
                       style: TextStyle(color: Et.textSecondary)),
                 ),
                 const SizedBox(width: 8),
@@ -649,7 +649,7 @@ class _ExtraKeysOrderSheetState extends State<_ExtraKeysOrderSheet> {
                   },
                   style: FilledButton.styleFrom(
                     backgroundColor: Et.primaryBtn,
-                    foregroundColor: Colors.white,
+                    foregroundColor: Et.primaryBtnText,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(9)),
                   ),
@@ -658,7 +658,7 @@ class _ExtraKeysOrderSheetState extends State<_ExtraKeysOrderSheet> {
                 const SizedBox(width: 14),
               ],
             ),
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(18, 4, 18, 8),
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -681,9 +681,9 @@ class _ExtraKeysOrderSheetState extends State<_ExtraKeysOrderSheet> {
                               fontWeight: FontWeight.w600,
                               color: Et.textPrimary)),
                       title: Text(_keyDesc(id),
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 13, color: Et.textSecondary)),
-                      trailing: const Icon(Icons.drag_handle,
+                      trailing: Icon(Icons.drag_handle,
                           size: 18, color: Et.textSecondary),
                     ),
                 ],

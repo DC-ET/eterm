@@ -140,25 +140,25 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除规则',
+        title: Text('删除规则',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
         content: Text('将从 vault 中删除规则「${r.label}」。此操作会同步到所有设备。',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
+                  backgroundColor: Et.danger,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('删除')),
@@ -194,14 +194,14 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.compare_arrows,
+                    Icon(Icons.compare_arrows,
                         size: 17, color: Et.textSecondary),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         '本地转发（-L）：监听本机端口，经 SSH 隧道转到大网/内网目标。'
                         '规则随 vault 同步，运行状态仅在本机。',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12.5,
                             height: 1.45,
                             color: Et.textSecondary),
@@ -250,7 +250,7 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
             child: FloatingActionButton(
               heroTag: 'pf-add',
               backgroundColor: Et.primaryBtn,
-              foregroundColor: Colors.white,
+              foregroundColor: Et.primaryBtnText,
               elevation: 2,
               onPressed: _showEditor,
               child: const Icon(Icons.add, size: 26),
@@ -269,21 +269,21 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Et.cardBorder),
               ),
-              child: const Icon(Icons.compare_arrows,
+              child: Icon(Icons.compare_arrows,
                   size: 30, color: Et.textSecondary),
             ),
             const SizedBox(height: 14),
-            const Text('还没有转发规则',
+            Text('还没有转发规则',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textPrimary)),
             const SizedBox(height: 5),
-            const Text('新建一条 -L 规则，把内网服务映射到本机端口',
+            Text('新建一条 -L 规则，把内网服务映射到本机端口',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
@@ -344,7 +344,7 @@ class _RuleCard extends StatelessWidget {
                         child: Text(rule.label,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w600,
                                 color: Et.textPrimary)),
@@ -358,7 +358,7 @@ class _RuleCard extends StatelessWidget {
                             color: const Color(0xFFF1F2F5),
                             borderRadius: BorderRadius.circular(5),
                           ),
-                          child: const Text('暂不支持启动',
+                          child: Text('暂不支持启动',
                               style: TextStyle(
                                   fontSize: 10.5,
                                   color: Et.textSecondary)),
@@ -368,7 +368,7 @@ class _RuleCard extends StatelessWidget {
                     Text('$listen → $target（经 ${hostLabel ?? '未知主机'}）',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontFamily: 'Menlo',
                             fontSize: 12,
                             color: Et.textSecondary)),
@@ -385,9 +385,9 @@ class _RuleCard extends StatelessWidget {
                       : (running ? onStop : onStart),
                   style: FilledButton.styleFrom(
                     backgroundColor:
-                        running ? const Color(0xFFF6F7F9) : Et.primaryBtn,
+                        running ? Et.card : Et.primaryBtn,
                     foregroundColor:
-                        running ? Et.textSecondary : Colors.white,
+                        running ? Et.textSecondary : Et.primaryBtnText,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(9)),
                     padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -402,7 +402,7 @@ class _RuleCard extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline,
+                icon: Icon(Icons.delete_outline,
                     size: 18, color: Et.textSecondary),
                 tooltip: '删除规则',
                 onPressed: onDelete,
@@ -517,10 +517,10 @@ class _RuleDialogState extends State<_RuleDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: Colors.white,
+      backgroundColor: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Text(widget.existing == null ? '新建转发规则' : '编辑转发规则',
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
@@ -604,15 +604,15 @@ class _RuleDialogState extends State<_RuleDialog> {
               contentPadding: EdgeInsets.zero,
               value: _enabled,
               onChanged: (v) => setState(() => _enabled = v),
-              title: const Text('启用规则',
+              title: Text('启用规则',
                   style: TextStyle(fontSize: 14, color: Et.textPrimary)),
             ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(_error!,
-                    style: const TextStyle(
-                        fontSize: 12.5, color: Color(0xFFD1242F))),
+                    style: TextStyle(
+                        fontSize: 12.5, color: Et.danger)),
               ),
           ]),
         ),
@@ -620,7 +620,7 @@ class _RuleDialogState extends State<_RuleDialog> {
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _saving ? null : _save,
           style: FilledButton.styleFrom(

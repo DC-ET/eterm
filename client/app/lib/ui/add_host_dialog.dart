@@ -133,14 +133,14 @@ class _AddHostDialogState extends State<AddHostDialog> {
   Widget build(BuildContext context) {
     final groups = widget.app.groups;
     return AlertDialog(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+      backgroundColor: Et.card,
+      surfaceTintColor: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
       contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
       actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
       title: Text(_isEdit ? '编辑主机' : '新建主机',
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
@@ -233,7 +233,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
                       children: [
                         // 粘贴按钮（不依赖系统 Cmd+V 行为，安卓/桌面都可靠）
                         IconButton(
-                          icon: const Icon(Icons.content_paste,
+                          icon: Icon(Icons.content_paste,
                               size: 17, color: Et.textSecondary),
                           tooltip: '粘贴',
                           onPressed: _pasteSecret,
@@ -265,7 +265,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
                       maxLines: 6,
                       validator: _secretValidator,
                       suffix: IconButton(
-                        icon: const Icon(Icons.content_paste,
+                        icon: Icon(Icons.content_paste,
                             size: 17, color: Et.textSecondary),
                         tooltip: '粘贴',
                         onPressed: _pasteSecret,
@@ -275,8 +275,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
                 if (_error != null) ...[
                   const SizedBox(height: 10),
                   Text('保存失败: $_error',
-                      style: const TextStyle(
-                          fontSize: 12.5, color: Color(0xFFD1242F))),
+                      style: TextStyle(
+                          fontSize: 12.5, color: Et.danger)),
                 ],
                 const SizedBox(height: 16),
               ],
@@ -288,12 +288,12 @@ class _AddHostDialogState extends State<AddHostDialog> {
         TextButton(
             onPressed: () => Navigator.pop(context),
             child:
-                const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                Text('取消', style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
             backgroundColor: Et.primaryBtn,
-            foregroundColor: Colors.white,
+            foregroundColor: Et.primaryBtnText,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
             minimumSize: const Size(0, 42),
@@ -435,7 +435,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
 
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(fontSize: 13, color: Et.textSecondary),
+        labelStyle: TextStyle(fontSize: 13, color: Et.textSecondary),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -460,7 +460,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
         keyboardType: keyboardType,
         validator:
             validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
-        style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+        style: TextStyle(fontSize: 14, color: Et.textPrimary),
         decoration: _dec(label).copyWith(
           suffixIcon: suffix,
           suffixIconConstraints:

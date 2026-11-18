@@ -40,12 +40,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/icon-1024.png
 
 # 应用图标生成（dart run flutter_launcher_icons）
 flutter_launcher_icons:
   image_path: assets/icon/icon-1024.png
   android: true
-  adaptive_icon_background: "#232937"
+  adaptive_icon_background: "#1F2633"
   adaptive_icon_foreground: assets/icon/icon-foreground.png
   macos:
     generate: true

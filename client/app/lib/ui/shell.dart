@@ -223,9 +223,9 @@ class _ShellPageState extends State<ShellPage> {
         if (!didPop && activeTab >= 0) setState(() => activeTab = -1);
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
-      value: compact && activeTab >= 0
-          ? SystemUiOverlayStyle.light // 手机终端：深色状态栏区
-          : SystemUiOverlayStyle.dark, // 手机列表浅色 / 桌面无状态栏
+      value: compact && activeTab >= 0 || Et.brightness == Brightness.dark
+          ? SystemUiOverlayStyle.light // 手机终端深色区 / 深色主题
+          : SystemUiOverlayStyle.dark, // 浅色列表页 / 桌面无状态栏
       child: Scaffold(
       backgroundColor: Et.contentBg,
       body: Column(
@@ -241,7 +241,7 @@ class _ShellPageState extends State<ShellPage> {
               onLogout: _logout,
             ),
             if (widget.app.loading)
-              const LinearProgressIndicator(minHeight: 2, color: Et.accent),
+              LinearProgressIndicator(minHeight: 2, color: Et.accent),
           ],
           Expanded(child: body),
         ],
@@ -343,7 +343,11 @@ class _MobileTabBar extends StatelessWidget {
         height: 36,
         padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
         decoration: BoxDecoration(
-          color: active ? Et.mSelected : Colors.white.withAlpha(160),
+          color: active
+                  ? Et.mSelected
+                  : (Et.brightness == Brightness.dark
+                      ? Colors.white.withAlpha(24)
+                      : Colors.white.withAlpha(160)),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
@@ -363,7 +367,7 @@ class _MobileTabBar extends StatelessWidget {
             InkWell(
               onTap: () => onCloseTab(i),
               borderRadius: BorderRadius.circular(10),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(4),
                 child: Icon(Icons.close, size: 15, color: Et.textSecondary),
               ),
@@ -429,12 +433,6 @@ class _TitleBar extends StatelessWidget {
                 ),
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.notifications_none,
-                  color: Color(0xFF9AA1B0), size: 20),
-              tooltip: '通知（M1）',
-              onPressed: () {},
-            ),
             const SizedBox(width: 8),
           ],
         ),
@@ -460,7 +458,7 @@ class _VaultPill extends StatelessWidget {
     final pos = box.localToGlobal(Offset.zero);
     showMenu<String>(
       context: context,
-      color: Colors.white,
+      color: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height, pos.dx + box.size.width, 0),
       items: [
@@ -491,7 +489,7 @@ class _VaultPill extends StatelessWidget {
               onTap: onSelectVault,
               borderRadius:
                   const BorderRadius.horizontal(left: Radius.circular(9)),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 11, vertical: 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -621,7 +619,26 @@ class _Sidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 12),
+          // 品牌行
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset('assets/icon/icon-1024.png',
+                      width: 24, height: 24, fit: BoxFit.cover),
+                ),
+                const SizedBox(width: 9),
+                Text('eterm',
+                    style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: Et.textPrimary,
+                        letterSpacing: 0.2)),
+              ],
+            ),
+          ),
           for (final (i, (icon, label)) in _items.indexed)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
@@ -661,7 +678,7 @@ class _Sidebar extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(12),
             child: Text('eterm · $username',
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 11.5, color: Et.textSecondary)),
           ),
         ],

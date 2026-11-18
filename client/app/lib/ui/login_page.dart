@@ -91,9 +91,16 @@ class _LoginPageState extends State<LoginPage> {
           width: 400,
           padding: const EdgeInsets.all(34),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Et.card,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: Et.cardBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(Et.brightness == Brightness.dark ? 60 : 14),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
           child: Form(
             key: _form,
@@ -101,20 +108,24 @@ class _LoginPageState extends State<LoginPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Row(
+                Row(
                   children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset('assets/icon/icon-1024.png',
+                          width: 46, height: 46, fit: BoxFit.cover),
+                    ),
+                    const SizedBox(width: 12),
                     Text('eterm',
                         style: TextStyle(
-                            fontSize: 26,
+                            fontSize: 25,
                             fontWeight: FontWeight.w800,
                             color: Et.textPrimary,
                             letterSpacing: -0.5)),
-                    SizedBox(width: 4),
-                    Icon(Icons.terminal, size: 22, color: Et.accent),
                   ],
                 ),
-                const SizedBox(height: 4),
-                const Text('服务器信息与密钥的统一中枢',
+                const SizedBox(height: 6),
+                Text('服务器信息与密钥的统一中枢',
                     style:
                         TextStyle(fontSize: 13, color: Et.textSecondary)),
                 const SizedBox(height: 26),
@@ -151,7 +162,7 @@ class _LoginPageState extends State<LoginPage> {
                   onPressed: _busy ? null : _submit,
                   style: FilledButton.styleFrom(
                     backgroundColor: Et.accent,
-                    foregroundColor: Colors.white,
+                    foregroundColor: Et.primaryBtnText,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),
                     minimumSize: const Size(0, 46),
@@ -169,8 +180,8 @@ class _LoginPageState extends State<LoginPage> {
                 if (_error != null) ...[
                   const SizedBox(height: 14),
                   Text(_error!,
-                      style: const TextStyle(
-                          fontSize: 13, color: Color(0xFFD1242F))),
+                      style: TextStyle(
+                          fontSize: 13, color: Et.danger)),
                 ],
               ],
             ),
@@ -193,10 +204,10 @@ class _LoginPageState extends State<LoginPage> {
         obscureText: obscure,
         autocorrect: false,
         validator: validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
-        style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+        style: TextStyle(fontSize: 14, color: Et.textPrimary),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(fontSize: 13, color: Et.textSecondary),
+          labelStyle: TextStyle(fontSize: 13, color: Et.textSecondary),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 13),

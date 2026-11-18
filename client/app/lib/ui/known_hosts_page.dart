@@ -41,26 +41,26 @@ class _KnownHostsPageState extends State<KnownHostsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('移除主机信任',
+        title: Text('移除主机信任',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
         content: Text(
             '将从本设备移除「${item.host}」的指纹记录。下次连接时将重新首连记录（若服务器键在此期间被替换，将无法察觉）。',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
+                  backgroundColor: Et.danger,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('移除')),
@@ -102,14 +102,14 @@ class _KnownHostsPageState extends State<KnownHostsPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.verified_user_outlined,
+                Icon(Icons.verified_user_outlined,
                     size: 17, color: Et.textSecondary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     '首次连接的 SSH 服务器指纹会自动记录在这里；后续连接逐次比对，'
                     '不一致将被拒绝（防中间人替换）。',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12.5,
                         height: 1.45,
                         color: Et.textSecondary),
@@ -155,21 +155,21 @@ class _KnownHostsPageState extends State<KnownHostsPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Et.cardBorder),
               ),
-              child: const Icon(Icons.fingerprint,
+              child: Icon(Icons.fingerprint,
                   size: 30, color: Et.textSecondary),
             ),
             const SizedBox(height: 14),
-            const Text('还没有已信任的服务器',
+            Text('还没有已信任的服务器',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textPrimary)),
             const SizedBox(height: 5),
-            const Text('首次连接 SSH 服务器时，其指纹会自动记录到此处',
+            Text('首次连接 SSH 服务器时，其指纹会自动记录到此处',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
@@ -207,7 +207,7 @@ class _KnownHostCard extends StatelessWidget {
                     Text(item.host,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
@@ -216,7 +216,7 @@ class _KnownHostCard extends StatelessWidget {
                     Text(item.fingerprint,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12,
                             fontFamily: 'Menlo',
                             color: Et.textSecondary)),
@@ -225,10 +225,10 @@ class _KnownHostCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(item.firstSeen,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 11.5, color: Et.textSecondary)),
               IconButton(
-                icon: const Icon(Icons.delete_outline,
+                icon: Icon(Icons.delete_outline,
                     size: 18, color: Et.textSecondary),
                 tooltip: '移除信任',
                 onPressed: onRemove,

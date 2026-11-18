@@ -39,21 +39,21 @@ class _LogsPageState extends State<LogsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('清空日志',
+        title: Text('清空日志',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
-        content: const Text('将清空本设备的全部事件记录（不影响服务器与其他设备）。',
+        content: Text('将清空本设备的全部事件记录（不影响服务器与其他设备）。',
             style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
               child:
-                  const Text('取消', style: TextStyle(color: Et.textSecondary))),
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(
@@ -92,9 +92,9 @@ class _LogsPageState extends State<LogsPage> {
                 compact ? 14 : 20, 14, compact ? 14 : 20, 8),
             child: Row(
               children: [
-                const Icon(Icons.history, size: 17, color: Et.textSecondary),
+                Icon(Icons.history, size: 17, color: Et.textSecondary),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
                     '本设备事件（最多保留 500 条）：连接、主机与密钥变更。仅存本地。',
                     style: TextStyle(
@@ -107,7 +107,7 @@ class _LogsPageState extends State<LogsPage> {
                   InkWell(
                     onTap: _confirmClear,
                     borderRadius: BorderRadius.circular(6),
-                    child: const Padding(
+                    child: Padding(
                       padding:
                           EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       child: Text('清空',
@@ -136,22 +136,22 @@ class _LogsPageState extends State<LogsPage> {
                               width: 64,
                               height: 64,
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: Et.card,
                                 borderRadius: BorderRadius.circular(20),
                                 border:
                                     Border.all(color: Et.cardBorder),
                               ),
-                              child: const Icon(Icons.history,
+                              child: Icon(Icons.history,
                                   size: 30, color: Et.textSecondary),
                             ),
                             const SizedBox(height: 14),
-                            const Text('还没有事件',
+                            Text('还没有事件',
                                 style: TextStyle(
                                     fontSize: 15.5,
                                     fontWeight: FontWeight.w600,
                                     color: Et.textPrimary)),
                             const SizedBox(height: 5),
-                            const Text('连接主机或修改数据后会记录在这里',
+                            Text('连接主机或修改数据后会记录在这里',
                                 style: TextStyle(
                                     fontSize: 13,
                                     color: Et.textSecondary)),
@@ -186,7 +186,7 @@ class _EventCard extends StatelessWidget {
       case 'connect_ok':
         return (Icons.play_arrow_rounded, const Color(0xFF2DA44E), '连接');
       case 'connect_fail':
-        return (Icons.error_outline, const Color(0xFFD1242F), '连接失败');
+        return (Icons.error_outline, Et.danger, '连接失败');
       case 'disconnect':
         return (Icons.stop_rounded, const Color(0xFFC77B27), '断开');
       case 'host_add':
@@ -194,9 +194,9 @@ class _EventCard extends StatelessWidget {
       case 'host_edit':
         return (Icons.edit_outlined, Et.tileGroup, '编辑主机');
       case 'host_delete':
-        return (Icons.delete_outline, const Color(0xFFD1242F), '删除主机');
+        return (Icons.delete_outline, Et.danger, '删除主机');
       case 'key_delete':
-        return (Icons.key_off, const Color(0xFFD1242F), '删除密钥');
+        return (Icons.key_off, Et.danger, '删除密钥');
     }
     return (Icons.circle, Et.textSecondary, item.kind);
   }
@@ -237,7 +237,7 @@ class _EventCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(5),
               ),
               child: Text(label,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 11, color: Et.textSecondary)),
             ),
             const SizedBox(width: 9),
@@ -245,12 +245,12 @@ class _EventCard extends StatelessWidget {
               child: Text(item.detail,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13, color: Et.textPrimary)),
             ),
             const SizedBox(width: 8),
             Text(_timeText,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 11, color: Et.textSecondary)),
           ],
         ),

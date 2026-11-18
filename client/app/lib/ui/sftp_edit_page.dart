@@ -131,21 +131,21 @@ class _SftpEditPageState extends State<SftpEditPage> {
         final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: Et.card,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('远端文件已变化',
+            title: Text('远端文件已变化',
                 style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: Et.textPrimary)),
-            content: const Text('远端文件在本次编辑期间被修改过（可能为其他会话或用户）。覆盖保存将丢失那部分改动。',
+            content: Text('远端文件在本次编辑期间被修改过（可能为其他会话或用户）。覆盖保存将丢失那部分改动。',
                 style: TextStyle(
                     fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('取消',
+                  child: Text('取消',
                       style: TextStyle(color: Et.textSecondary))),
               FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
@@ -218,26 +218,26 @@ class _SftpEditPageState extends State<SftpEditPage> {
         final discard = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: Et.card,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('放弃修改？',
+            title: Text('放弃修改？',
                 style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: Et.textPrimary)),
-            content: const Text('有未保存的修改，返回将丢失。',
+            content: Text('有未保存的修改，返回将丢失。',
                 style: TextStyle(
                     fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('继续编辑',
+                  child: Text('继续编辑',
                       style: TextStyle(color: Et.textSecondary))),
               FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
                   style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFD1242F),
+                      backgroundColor: Et.danger,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9))),
                   child: const Text('放弃修改')),
@@ -252,8 +252,8 @@ class _SftpEditPageState extends State<SftpEditPage> {
       child: Scaffold(
         backgroundColor: Et.contentBg,
         appBar: AppBar(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.white,
+          backgroundColor: Et.card,
+          surfaceTintColor: Et.card,
           elevation: 0.5,
           foregroundColor: Et.textPrimary,
           title: Column(
@@ -267,7 +267,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
               Text(widget.remotePath,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 11,
                       fontFamily: 'Menlo',
                       color: Et.textSecondary)),
@@ -287,7 +287,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
                                   CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(Icons.save_outlined, size: 21),
                     )
-                  : const Padding(
+                  : Padding(
                       padding: EdgeInsets.only(right: 14),
                       child: Center(
                           child: Text('已保存',
@@ -305,7 +305,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Et.card,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Et.cardBorder),
                 ),
@@ -351,7 +351,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
                     ? '${_phase == _EditPhase.saving ? "回传中" : "读取中"} '
                         '${_fmtSize(p.$1)}/${_fmtSize(total)}'
                     : (_phase == _EditPhase.saving ? '回传中…' : '读取中…'),
-            style: const TextStyle(fontSize: 12.5, color: Et.textSecondary),
+            style: TextStyle(fontSize: 12.5, color: Et.textSecondary),
           ),
         ],
       ),
@@ -368,7 +368,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
             child: Text(_reason ?? '加载失败',
                 textAlign: TextAlign.center,
                 style:
-                    const TextStyle(fontSize: 13, color: Et.textSecondary)),
+                    TextStyle(fontSize: 13, color: Et.textSecondary)),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -376,7 +376,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
             icon: const Icon(Icons.refresh, size: 18),
             label: const Text('重试'),
             style: FilledButton.styleFrom(
-                backgroundColor: Et.primaryBtn, foregroundColor: Colors.white),
+                backgroundColor: Et.primaryBtn, foregroundColor: Et.primaryBtnText),
           ),
         ],
       ),

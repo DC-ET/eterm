@@ -100,24 +100,24 @@ class _HostsPageState extends State<HostsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除主机',
+        title: Text('删除主机',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
         content: Text('将从你的 vault 中删除「${h.label}」（${h.username}@${h.hostname}），'
             '关联的凭据一并下线。此操作会同步到所有设备。',
-            style: const TextStyle(fontSize: 13.5, color: Et.textSecondary)),
+            style: TextStyle(fontSize: 13.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消', style: TextStyle(color: Et.textSecondary))),
+              child: Text('取消', style: TextStyle(color: Et.textSecondary))),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
               style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD1242F),
+                  backgroundColor: Et.danger,
                   shape:
                       RoundedRectangleBorder(borderRadius: BorderRadius.circular(9))),
               child: const Text('删除')),
@@ -137,7 +137,7 @@ class _HostsPageState extends State<HostsPage> {
   void _cardMenu(HostView h, Offset anchorTopLeft, Size anchorSize) {
     showMenu<String>(
       context: context,
-      color: Colors.white,
+      color: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: RelativeRect.fromLTRB(
         anchorTopLeft.dx,
@@ -146,22 +146,22 @@ class _HostsPageState extends State<HostsPage> {
         0,
       ),
       items: [
-        const PopupMenuItem(
+        PopupMenuItem(
             value: 'connect',
             height: 40,
             child: _MenuItemText('连接终端', Et.textPrimary)),
-        const PopupMenuItem(
+        PopupMenuItem(
             value: 'sftp',
             height: 40,
             child: _MenuItemText('SFTP 文件', Et.textPrimary)),
-        const PopupMenuItem(
+        PopupMenuItem(
             value: 'edit',
             height: 40,
             child: _MenuItemText('编辑主机', Et.textPrimary)),
-        const PopupMenuItem(
+        PopupMenuItem(
             value: 'delete',
             height: 40,
-            child: _MenuItemText('删除主机', Color(0xFFD1242F))),
+            child: _MenuItemText('删除主机', Et.danger)),
       ],
     ).then((v) {
       if (!mounted || v == null) return;
@@ -215,20 +215,20 @@ class _HostsPageState extends State<HostsPage> {
                     child: Container(
                       height: 40,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: Et.card,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Et.cardBorder),
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Row(
                         children: [
-                          const Icon(Icons.search,
+                          Icon(Icons.search,
                               size: 18, color: Et.textSecondary),
                           const SizedBox(width: 8),
                           Expanded(
                             child: TextField(
                               controller: _search,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 13.5, color: Et.textPrimary),
                               // 回车：唯一匹配直接连接
                               onSubmitted: (_) =>
@@ -246,7 +246,7 @@ class _HostsPageState extends State<HostsPage> {
                                 _search.clear();
                                 setState(() => _groupFilter = null);
                               },
-                              child: const Icon(Icons.close,
+                              child: Icon(Icons.close,
                                   size: 16, color: Et.textSecondary),
                             ),
                         ],
@@ -259,7 +259,7 @@ class _HostsPageState extends State<HostsPage> {
                     style: FilledButton.styleFrom(
                       backgroundColor: Et.primaryBtn,
                       disabledBackgroundColor: const Color(0xFFC9CBD3),
-                      foregroundColor: Colors.white,
+                      foregroundColor: Et.primaryBtnText,
                       disabledForegroundColor: Colors.white60,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9)),
@@ -280,7 +280,7 @@ class _HostsPageState extends State<HostsPage> {
                     label: const Text('新建主机'),
                     style: FilledButton.styleFrom(
                       backgroundColor: Et.primaryBtn,
-                      foregroundColor: Colors.white,
+                      foregroundColor: Et.primaryBtnText,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9)),
                       minimumSize: const Size(0, 38),
@@ -291,7 +291,7 @@ class _HostsPageState extends State<HostsPage> {
                     InputChip(
                       label: Text(widget.app.groupName(_groupFilter) ?? '分组'),
                       onDeleted: () => setState(() => _groupFilter = null),
-                      backgroundColor: Colors.white,
+                      backgroundColor: Et.card,
                     ),
                   const Spacer(),
                   _viewToggle(Icons.grid_view_rounded, true),
@@ -302,8 +302,8 @@ class _HostsPageState extends State<HostsPage> {
               const SizedBox(height: 8),
               // 同步进度细条
               if (widget.app.loading)
-                const LinearProgressIndicator(
-                    minHeight: 2, color: Et.accent, backgroundColor: Colors.white),
+                LinearProgressIndicator(
+                    minHeight: 2, color: Et.accent, backgroundColor: Et.card),
               Expanded(
                 child: widget.app.error == 'unauthorized'
                     ? const SizedBox.shrink() // 壳层正在跳转登录页
@@ -336,7 +336,7 @@ class _HostsPageState extends State<HostsPage> {
             child: InputChip(
               label: Text('分组：${widget.app.groupName(_groupFilter) ?? ''}'),
               onDeleted: () => setState(() => _groupFilter = null),
-              backgroundColor: Colors.white,
+              backgroundColor: Et.card,
             ),
           ),
         Expanded(
@@ -363,7 +363,7 @@ class _HostsPageState extends State<HostsPage> {
               _mobileAppBar(context),
               if (_showSearch) _mobileSearch(),
               if (widget.app.loading)
-                const LinearProgressIndicator(
+                LinearProgressIndicator(
                     minHeight: 2, color: Et.accent),
               Expanded(child: content),
             ],
@@ -378,10 +378,10 @@ class _HostsPageState extends State<HostsPage> {
               child: InkWell(
                 onTap: _addHost,
                 borderRadius: BorderRadius.circular(22),
-                child: const SizedBox(
+                child: SizedBox(
                   width: 62,
                   height: 62,
-                  child: Icon(Icons.add, size: 30, color: Et.textPrimary),
+                  child: Icon(Icons.add, size: 30, color: Et.mFabIcon),
                 ),
               ),
             ),
@@ -403,10 +403,10 @@ class _HostsPageState extends State<HostsPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
-                color: Colors.white.withAlpha(150),
+                color: Et.card.withAlpha(150),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(Icons.dns, size: 17, color: Et.textPrimary),
                   SizedBox(width: 6),
@@ -420,7 +420,7 @@ class _HostsPageState extends State<HostsPage> {
             ),
           ),
           const SizedBox(width: 14),
-          const Text('Hosts',
+          Text('Hosts',
               style: TextStyle(
                   fontSize: 21,
                   fontWeight: FontWeight.w700,
@@ -428,7 +428,7 @@ class _HostsPageState extends State<HostsPage> {
           const Spacer(),
           IconButton(
             onPressed: () => setState(() => _showSearch = !_showSearch),
-            icon: const Icon(Icons.search, size: 23, color: Et.textPrimary),
+            icon: Icon(Icons.search, size: 23, color: Et.textPrimary),
             tooltip: '搜索',
           ),
         ],
@@ -444,19 +444,19 @@ class _HostsPageState extends State<HostsPage> {
       child: Container(
         height: 42,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Et.card,
           borderRadius: BorderRadius.circular(21),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Row(
           children: [
-            const Icon(Icons.search, size: 19, color: Et.textSecondary),
+            Icon(Icons.search, size: 19, color: Et.textSecondary),
             const SizedBox(width: 8),
             Expanded(
               child: TextField(
                 controller: _search,
                 autofocus: true,
-                style: const TextStyle(fontSize: 14, color: Et.textPrimary),
+                style: TextStyle(fontSize: 14, color: Et.textPrimary),
                 onSubmitted: (_) => exact == null ? null : _connect(exact),
                 decoration: const InputDecoration(
                   hintText: '查找主机…',
@@ -470,7 +470,7 @@ class _HostsPageState extends State<HostsPage> {
                 _search.clear();
                 setState(() => _showSearch = false);
               },
-              child: const Icon(Icons.close, size: 18, color: Et.textSecondary),
+              child: Icon(Icons.close, size: 18, color: Et.textSecondary),
             ),
           ],
         ),
@@ -492,20 +492,20 @@ class _HostsPageState extends State<HostsPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Icon(Icons.dns_outlined,
+              child: Icon(Icons.dns_outlined,
                   size: 30, color: Et.textSecondary),
             ),
             const SizedBox(height: 14),
-            const Text('还没有主机',
+            Text('还没有主机',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
                     color: Et.textPrimary)),
             const SizedBox(height: 5),
-            const Text('添加你的第一台服务器开始使用',
+            Text('添加你的第一台服务器开始使用',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
@@ -555,30 +555,33 @@ class _HostsPageState extends State<HostsPage> {
 
   /// 同步失败横幅：保留本地快照渲染，仅提示 + 重试
   Widget _errorBanner(String message) {
-    const danger = Color(0xFFD1242F);
+    final danger = Et.danger;
+    final bannerBg = Et.brightness == Brightness.dark
+        ? Et.danger.withAlpha(26)
+        : const Color(0xFFFCEDED);
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFCEDED),
+        color: bannerBg,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off, size: 16, color: danger),
+          Icon(Icons.cloud_off, size: 16, color: danger),
           const SizedBox(width: 8),
           Expanded(
             child: Text('同步失败，正在显示本地缓存 · $message',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5, color: danger)),
+                style: TextStyle(fontSize: 12.5, color: danger)),
           ),
           const SizedBox(width: 8),
           InkWell(
             onTap: () => widget.app.refresh(),
             borderRadius: BorderRadius.circular(6),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               child: Text('重试',
                   style: TextStyle(
                       fontSize: 12.5,
@@ -594,7 +597,7 @@ class _HostsPageState extends State<HostsPage> {
   void _accountMenu(BuildContext context) {
     showMenu<String>(
       context: context,
-      color: Colors.white,
+      color: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: const RelativeRect.fromLTRB(12, 52, 240, 0),
       items: [
@@ -602,7 +605,7 @@ class _HostsPageState extends State<HostsPage> {
             enabled: false,
             child: Text('已登录：${widget.mobileUsername}',
                 style: const TextStyle(fontSize: 13.5))),
-        const PopupMenuItem(
+        PopupMenuItem(
             value: 'logout',
             height: 40,
             child: Text('退出登录',
@@ -630,7 +633,7 @@ class _HostsPageState extends State<HostsPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('还没有主机',
+            Text('还没有主机',
                 style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w600,
@@ -642,7 +645,7 @@ class _HostsPageState extends State<HostsPage> {
               label: const Text('新建主机'),
               style: FilledButton.styleFrom(
                 backgroundColor: Et.primaryBtn,
-                foregroundColor: Colors.white,
+                foregroundColor: Et.primaryBtnText,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(9)),
                 minimumSize: const Size(0, 38),
@@ -725,7 +728,7 @@ class _CenterNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Text(text, style: const TextStyle(color: Et.textSecondary)),
+        child: Text(text, style: TextStyle(color: Et.textSecondary)),
       );
 }
 
@@ -737,7 +740,7 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(2, 12, 0, 4),
         child: Text(text,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 15.5,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
@@ -772,7 +775,7 @@ class _GroupCard extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          const _IconTile(color: Et.tileGroup, icon: Icons.grid_view_rounded),
+          _IconTile(color: Et.tileGroup, icon: Icons.grid_view_rounded),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -782,13 +785,13 @@ class _GroupCard extends StatelessWidget {
                 Text(group.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: Et.textPrimary)),
                 const SizedBox(height: 3),
                 Text('${group.count} 台主机',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12.5, color: Et.textSecondary)),
               ],
             ),
@@ -837,7 +840,7 @@ class _HostCard extends StatelessWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              const _IconTile(color: Et.tileHost, icon: Icons.dns_rounded),
+              _IconTile(color: Et.tileHost, icon: Icons.dns_rounded),
               if (open)
                 Positioned(
                   right: -2,
@@ -863,7 +866,7 @@ class _HostCard extends StatelessWidget {
                 Text(host.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: Et.textPrimary)),
@@ -880,7 +883,7 @@ class _HostCard extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.more_horiz,
+            icon: Icon(Icons.more_horiz,
                 size: 18, color: Et.textSecondary),
             tooltip: '操作',
             onPressed: () => _menuAt(context),
@@ -958,7 +961,7 @@ class _MobileTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Et.card,
       borderRadius: BorderRadius.circular(22),
       child: InkWell(
         onTap: onTap,
@@ -1005,7 +1008,7 @@ class _MobileTile extends StatelessWidget {
                     Text(title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 15.5,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
@@ -1023,7 +1026,7 @@ class _MobileTile extends StatelessWidget {
               ),
               if (onMenu != null)
                 IconButton(
-                  icon: const Icon(Icons.more_horiz,
+                  icon: Icon(Icons.more_horiz,
                       size: 19, color: Et.textSecondary),
                   tooltip: '操作',
                   onPressed: () => _menuAt(context),
@@ -1051,7 +1054,7 @@ class PlaceholderPage extends StatelessWidget {
               width: 68,
               height: 68,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Et.card,
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: Et.cardBorder),
               ),
@@ -1060,7 +1063,7 @@ class PlaceholderPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(title,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 16.5,
                     fontWeight: FontWeight.w700,
                     color: Et.textPrimary)),
@@ -1069,7 +1072,7 @@ class PlaceholderPage extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 280),
               child: Text(note,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13, height: 1.5, color: Et.textSecondary)),
             ),
           ],
