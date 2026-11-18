@@ -70,7 +70,7 @@ class _LoginPageState extends State<LoginPage> {
       ));
     } on ApiException catch (e) {
       setState(() => _error = switch (e.status) {
-            401 => '用户名或口令错误',
+            401 => '用户名或密码错误',
             423 => '已连续失败 5 次，账号锁定 15 分钟',
             429 => '尝试过于频繁，请稍后再试',
             403 => '该账号没有个人库（no_vault）',
@@ -145,7 +145,7 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 14),
                 _field(
                   _password,
-                  '口令',
+                  '密码',
                   obscure: !_passwordVisible,
                   suffix: IconButton(
                     icon: Icon(

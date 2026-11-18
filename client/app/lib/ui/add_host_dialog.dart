@@ -1,6 +1,6 @@
 // 新建/编辑主机对话框（Termius 式浅色；内容可滚动——修复多行域撑破对话框）。
-// 编辑模式：预填 + 认证方式只读；口令留空保持不变；私钥替换会新建 ssh_key 实体。
-// 凭据域带粘贴按钮；口令带可见性切换。
+// 编辑模式：预填 + 认证方式只读；密码留空保持不变；私钥替换会新建 ssh_key 实体。
+// 凭据域带粘贴按钮；密码带可见性切换。
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -319,8 +319,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
           : const BorderRadius.horizontal(right: Radius.circular(20));
       return Expanded(
         child: GestureDetector(
-          // 编辑模式只读（切换=删除重建，避免凭据歧义）；新建模式切回口令时
-          // 清空私域输入：先粘 PEM 再切口令会把 PEM 当口令保存（评审 P2）
+          // 编辑模式只读（切换=删除重建，避免凭据歧义）；新建模式切回密码时
+          // 清空私域输入：先粘 PEM 再切密码会把 PEM 当密码保存（评审 P2）
           onTap: _isEdit || value == _usePassword
               ? null
               : () => setState(() {
@@ -346,7 +346,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
-      child: Row(children: [seg(true, '口令'), seg(false, '私钥')]),
+      child: Row(children: [seg(true, '密码'), seg(false, '私钥')]),
     );
   }
 
@@ -417,9 +417,9 @@ class _AddHostDialogState extends State<AddHostDialog> {
 
   String get _secretLabel {
     if (_isEdit) {
-      return _usePassword ? '口令（留空保持不变）' : '私钥（粘贴新 PEM 可替换；留空不变）';
+      return _usePassword ? '密码（留空保持不变）' : '私钥（粘贴新 PEM 可替换；留空不变）';
     }
-    return _usePassword ? '口令' : '私钥（OpenSSH PEM）';
+    return _usePassword ? '密码' : '私钥（OpenSSH PEM）';
   }
 
   /// 编辑且已有凭据：允许留空（保持现有凭据）。注意必须返回恒通过的

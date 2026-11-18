@@ -2,7 +2,7 @@
 // 密钥：生成（Ed25519/ECDSA P-256/RSA，Rust core）/ 导入（粘贴或文件，Rust 校验
 // 类型/指纹/公钥行）/ 详情（指纹、公钥行复制、部署公钥到目标机 authorized_keys）/
 // 导出私钥（复制）/ 改名 / 删除（仅未被引用）。
-// Identity（F4.1：用户名+口令/Key 凭据组合）：列表 / 编辑（一处改全局生效）/
+// Identity（F4.1：用户名+密码/Key 凭据组合）：列表 / 编辑（一处改全局生效）/
 // 删除（仅未被主机引用）。
 // 密钥内容只落应用自有加密库（LKMK 密文），不走 OS 钥匙串。
 // 主机认证从「编辑 → 认证」可复用 Keychain 中的已有密钥（identity.key_id 引用）。
@@ -654,7 +654,7 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
           children: [
             Expanded(
               child: _AuthKindOption(
-                label: '口令认证',
+                label: '密码认证',
                 icon: Icons.password,
                 selected: _usePassword,
                 onTap: () => setState(() => _usePassword = true),
@@ -678,7 +678,7 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
             obscureText: true,
             autocorrect: false,
             style: TextStyle(fontSize: 14, color: Et.textPrimary),
-            decoration: _dec(widget.item.hasPassword ? '新口令（留空保留原口令）' : '口令'),
+            decoration: _dec(widget.item.hasPassword ? '新密码（留空保留原密码）' : '密码'),
           )
         else ...[
           DropdownButtonFormField<String>(
@@ -715,7 +715,7 @@ class _IdentityEditDialogState extends State<_IdentityEditDialog> {
   }
 }
 
-/// 认证方式选择块（口令/密钥二选一）。
+/// 认证方式选择块（密码/密钥二选一）。
 class _AuthKindOption extends StatelessWidget {
   const _AuthKindOption({
     required this.label,
@@ -1190,7 +1190,7 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
           ),
         ),
         const SizedBox(height: 8),
-        Text('口令加密的私钥暂不支持；导入时会校验并提取类型与指纹',
+        Text('带密码（passphrase）加密的私钥暂不支持；导入时会校验并提取类型与指纹',
             style: TextStyle(fontSize: 12, color: Et.textSecondary)),
         if (_error != null) ...[
           const SizedBox(height: 10),

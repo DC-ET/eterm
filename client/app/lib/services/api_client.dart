@@ -34,7 +34,7 @@ class ApiClient {
 
   Map<String, String> _headers() => {
         // charset 必须显式：dart:io 无 charset 时按 latin1 编码请求体，
-        // 中文标签/口令会直接抛 "Contains invalid characters"
+        // 中文标签/密码会直接抛 "Contains invalid characters"
         'content-type': 'application/json; charset=utf-8',
         if (token != null) 'authorization': 'Bearer $token',
       };

@@ -21,7 +21,7 @@ Future<KeyGenerateResult> keyGenerate({
   comment: comment,
 );
 
-/// 校验/解析导入的私钥 PEM（OpenSSH / PKCS#8；口令加密的密钥不支持）。
+/// 校验/解析导入的私钥 PEM（OpenSSH / PKCS#8；密码加密的密钥不支持）。
 /// 返回类型 / SHA256 指纹 / 一行公钥（authorized_keys 可直接粘贴）。
 SshKeyMeta keyInspect({required String pem}) =>
     RustLib.instance.api.crateApiKeychainKeyInspect(pem: pem);

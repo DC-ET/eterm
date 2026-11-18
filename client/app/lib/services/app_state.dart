@@ -1,6 +1,6 @@
 // 应用状态（M1）：本地库快照引导 + 增量 cursor 同步 + 私钥入中枢（ssh_key 实体链）。
-// 凭据解析：identity.password_enc（口令）| identity.key_id → ssh_key.private_enc（私钥）。
-// 私钥/口令都随中枢同步（服务端静态加密），重启与跨设备均可用。
+// 凭据解析：identity.password_enc（密码）| identity.key_id → ssh_key.private_enc（私钥）。
+// 私钥/密码都随中枢同步（服务端静态加密），重启与跨设备均可用。
 
 import 'dart:convert';
 import 'dart:math';
@@ -57,7 +57,7 @@ class KeyView {
   final List<String> usedBy; // 使用此密钥的主机 label
 }
 
-/// Identity 视图（F4.1：用户名 + 口令/Key 的凭据组合，引用式管理）。
+/// Identity 视图（F4.1：用户名 + 密码/Key 的凭据组合，引用式管理）。
 class IdentityView {
   IdentityView({
     required this.id,
@@ -77,10 +77,10 @@ class IdentityView {
   final String? keyLabel;
   final List<String> usedBy; // 引用此凭据的主机 label
 
-  /// 徽标文案：口令 / 密钥名；引用的密钥已失效、或既无口令也无密钥（历史悬空
+  /// 徽标文案：密码 / 密钥名；引用的密钥已失效、或既无密码也无密钥（历史悬空
   /// 数据）时给出可排障的区分文案（评审 OBS-2）。
   String get authKindText {
-    if (hasPassword) return '口令';
+    if (hasPassword) return '密码';
     if (keyLabel != null) return keyLabel!;
     return keyId != null ? '密钥（已失效）' : '无凭据';
   }
@@ -223,7 +223,7 @@ class AppState extends ChangeNotifier {
   String? groupName(String? id) =>
       id == null ? null : _entities['host_group/$id']?['label']?.toString();
 
-  /// 连接凭据解析：identity 口令 / ssh_key 私钥（均来自中枢，重启可用）。
+  /// 连接凭据解析：identity 密码 / ssh_key 私钥（均来自中枢，重启可用）。
   ({String authKind, String secret})? credentialFor(HostView h) {
     if (h.identityId == null) return null;
     final identity = _entities['identity/${h.identityId}'];
@@ -293,7 +293,7 @@ class AppState extends ChangeNotifier {
     return list;
   }
 
-  /// Identity 视图：凭据组合（用户名 + 口令/Key）+ 反向引用（哪些主机在用）。
+  /// Identity 视图：凭据组合（用户名 + 密码/Key）+ 反向引用（哪些主机在用）。
   /// Keychain 页消费（F4.1 引用式管理）；identity 编辑经 updateIdentity 一处生效。
   List<IdentityView> get identities {
     final hostLabel = <String, String>{};
@@ -347,9 +347,9 @@ class AppState extends ChangeNotifier {
   bool identityKeyMissing(IdentityView v) =>
       v.keyId != null && !_entities.containsKey('ssh_key/${v.keyId}');
 
-  /// 编辑 Identity：username / 认证方式（口令 ⇄ 密钥）。wire 契约：identity 的
+  /// 编辑 Identity：username / 认证方式（密码 ⇄ 密钥）。wire 契约：identity 的
   /// 4 个 wire 字段全部显式回传（服务端 push 部分更新语义，缺键不改列）。
-  /// 口令模式：password 空 = 保留原口令；密钥模式：password_enc 显式 null 清列。
+  /// 密码模式：password 空 = 保留原密码；密钥模式：password_enc 显式 null 清列。
   Future<void> updateIdentity({
     required IdentityView identity,
     required String username,
@@ -373,9 +373,9 @@ class AppState extends ChangeNotifier {
           ? password
           : (oldPassword is String ? oldPassword : null);
       if (effectivePassword == null || effectivePassword.isEmpty) {
-        throw ApiException(200, '请填写口令（原凭据没有可保留的口令）');
+        throw ApiException(200, '请填写密码（原凭据没有可保留的密码）');
       }
-      effectiveKeyId = null; // 口令认证必须显式清 key_id 列
+      effectiveKeyId = null; // 密码认证必须显式清 key_id 列
     } else {
       if (keyId == null || keyId.isEmpty) {
         throw ApiException(200, '请选择 Keychain 中的密钥');
@@ -560,7 +560,7 @@ class AppState extends ChangeNotifier {
     await refresh();
   }
 
-  /// 主机当前使用的密钥 id（identity.key_id；无凭据或口令认证返回 null）。
+  /// 主机当前使用的密钥 id（identity.key_id；无凭据或密码认证返回 null）。
   String? keyIdOfIdentity(String? identityId) {
     if (identityId == null) return null;
     final kid = _entities['identity/$identityId']?['key_id'];
@@ -719,7 +719,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 添加主机：host(+可选 group) + host_protocol(ssh)。
-  /// 口令认证 → identity.password_enc；私钥认证 → ssh_key 实体 + identity.key_id
+  /// 密码认证 → identity.password_enc；私钥认证 → ssh_key 实体 + identity.key_id
   /// （或从 Keychain 复用已有密钥：existingKeyId 直指 identity.key_id，不建新实体）。
   /// 全部走中枢（服务端静态加密），重启与跨设备可用。
   Future<void> addHost({
@@ -782,7 +782,7 @@ class AppState extends ChangeNotifier {
       changes.add(_upsert('identity', identityId, {
         'label': username,
         'username': username,
-        'password_enc': null, // 显式 null：私钥认证的 identity 必清口令列
+        'password_enc': null, // 显式 null：私钥认证的 identity 必清密码列
         'key_id': keyId,
       }));
     }
@@ -864,7 +864,7 @@ class AppState extends ChangeNotifier {
     };
   }
 
-  /// 编辑主机：label/hostname/port/username/分组；口令可改（原样可留空），
+  /// 编辑主机：label/hostname/port/username/分组；密码可改（原样可留空），
   /// 私钥替换二选一：replaceKeyPem 粘贴新 PEM（新建 ssh_key 实体——服务端禁止
   /// 覆盖既有密钥内容 immutable，重指 key_id）或 replaceWithKeyId 从 Keychain
   /// 复用已有密钥（identity.key_id 直指）。
