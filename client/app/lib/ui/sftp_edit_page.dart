@@ -211,6 +211,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(context); // 主题切换时随 inherited 重建
     return PopScope(
       canPop: !_dirty || _phase != _EditPhase.editing,
       onPopInvokedWithResult: (didPop, _) async {

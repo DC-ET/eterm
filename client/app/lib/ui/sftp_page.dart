@@ -682,6 +682,7 @@ class _SftpPageState extends State<SftpPage> {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(context); // 主题切换时随 inherited 重建（Et 静态令牌不感知）
     final compact = MediaQuery.sizeOf(context).width < 720;
     return Scaffold(
       backgroundColor: Et.contentBg,

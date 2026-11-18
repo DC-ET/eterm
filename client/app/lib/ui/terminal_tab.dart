@@ -343,13 +343,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   }
 
   Future<void> _showExtraKeysOrderSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Et.card,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (_) => const _ExtraKeysOrderSheet(),
-    );
+    await showExtraKeysOrderSheet(context);
   }
 
   @override
@@ -492,6 +486,17 @@ class _TerminalTabViewState extends State<TerminalTabView> {
       ),
     );
   }
+}
+
+/// 键条重排面板入口（终端键条与设置页共用）。
+Future<void> showExtraKeysOrderSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Et.card,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+    builder: (_) => const _ExtraKeysOrderSheet(),
+  );
 }
 
 /// 键条键定义（id → 展示；行为分发在 _onExtraKey，顺序可在键条/菜单里重排）。

@@ -19,6 +19,7 @@ import 'keychain_page.dart';
 import 'logs_page.dart';
 import 'known_hosts_page.dart';
 import 'port_forwarding_page.dart';
+import 'settings_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
 import 'theme.dart';
@@ -131,6 +132,9 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 注册 Theme 依赖：主题切换时整个壳（含各导航页）随之重建
+    // （Et 是静态令牌，自身不感知 inherited；无此依赖 pushed 路由不会重绘）
+    Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
     final content = switch (navIndex) {
       0 => HostsPage(
@@ -142,8 +146,10 @@ class _ShellPageState extends State<ShellPage> {
         ),
       1 => KeychainPage(app: widget.app),
       2 => PortForwardingPage(app: widget.app),
-      3 => const KnownHostsPage(),
-      _ => const LogsPage(),
+      // 勿加 const：Shell 随主题重建时 const 实例会被 Flutter 跳过（identical）
+      3 => KnownHostsPage(),
+      4 => LogsPage(),
+      _ => SettingsPage(),
     };
     // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
     final vaultView = compact
@@ -261,8 +267,9 @@ const _compactNav = [
   (Icons.key_outlined, 'Keys'),
   (Icons.fingerprint, 'Known Hosts'),
   (Icons.history, 'Logs'),
+  (Icons.settings_outlined, 'Settings'),
 ];
-const _compactNavTarget = [0, 1, 3, 4];
+const _compactNavTarget = [0, 1, 3, 4, 5];
 
 int _compactNavIndex(int navIndex) {
   final i = _compactNavTarget.indexOf(navIndex);
@@ -609,6 +616,7 @@ class _Sidebar extends StatelessWidget {
     (Icons.compare_arrows, 'Port Forwarding'),
     (Icons.fingerprint, 'Known Hosts'),
     (Icons.history, 'Logs'),
+    (Icons.settings_outlined, 'Settings'),
   ];
 
   @override

@@ -83,6 +83,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(context); // 主题切换时随 inherited 重建
     return Scaffold(
       backgroundColor: Et.contentBg,
       body: SafeArea(

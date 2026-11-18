@@ -23,7 +23,6 @@ import 'ui/theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
-  ThemeController.instance.load(); // 外观偏好（浅/深/跟随系统）先行落位
   // 窗口管理仅桌面端（window_manager 无 Android 实现，移动端跳过）
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
     await windowManager.ensureInitialized();
@@ -56,7 +55,8 @@ class EtermApp extends StatelessWidget {
           theme: buildM3Theme(kLightPalette),
           darkTheme: buildM3Theme(kDarkPalette),
           themeMode: ThemeController.instance.materialMode,
-          home: const _Boot(),
+          // 勿加 const：根重建（主题切换）时 const 实例 identical，子树会被跳过
+          home: _Boot(),
         );
       },
     );
@@ -85,6 +85,8 @@ class _BootState extends State<_Boot> {
     try {
       final dir = await getApplicationSupportDirectory();
       local.initCore(dataDir: dir.path);
+      // 外观偏好（浅/深/跟随系统）：kv 依赖 init_core，须在其后恢复
+      ThemeController.instance.load();
     } catch (e) {
       // DB 不可用时恢复链必然级联失败（restore/clear 都要开库）——终止并给出重试
       if (!mounted) return;
