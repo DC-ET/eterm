@@ -1,7 +1,12 @@
 pub mod field;
 pub mod keystore;
+pub mod sshkey;
 
 pub use field::{open_field, seal_field, CoreError};
+pub(crate) use field::base64_encode;
+pub use sshkey::{
+    generate_ecdsa_p256, generate_ed25519, generate_rsa, inspect_secret, GeneratedKey, SshKeyMeta,
+};
 
 /// 当前 Unix 秒（时钟回拨等异常按 0 处理，与历史行为一致）。
 pub fn unix_now_secs() -> u64 {

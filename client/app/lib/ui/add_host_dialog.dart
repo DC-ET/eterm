@@ -34,6 +34,10 @@ class _AddHostDialogState extends State<AddHostDialog> {
   final _secret = TextEditingController();
   final _newGroup = TextEditingController();
   bool _usePassword = true;
+  // 私钥来源：true = 从 Keychain 复用已有密钥（identity.key_id 引用），
+  // false = 粘贴新 PEM（新建 ssh_key 实体）。Keychain 为空时不显示切换。
+  bool _keyFromVault = false;
+  String? _vaultKeyId;
   String? _groupId; // null = 未分组
   bool _newGroupMode = false;
   bool _busy = false;
@@ -54,6 +58,12 @@ class _AddHostDialogState extends State<AddHostDialog> {
       _groupId = h.groupId;
       final cred = widget.app.credentialFor(h);
       _usePassword = cred?.authKind == 'password';
+      if (!_usePassword) {
+        // 编辑私钥主机：默认指向当前密钥（Keychain 下拉可换绑其他已有密钥）
+        _vaultKeyId = widget.app.keyIdOfIdentity(h.identityId);
+        _keyFromVault = _vaultKeyId != null &&
+            widget.app.keys.any((k) => k.id == _vaultKeyId);
+      }
     }
   }
 
@@ -93,7 +103,9 @@ class _AddHostDialogState extends State<AddHostDialog> {
           groupId: _newGroupMode ? null : _groupId,
           newGroupName: _newGroupMode ? _newGroup.text : null,
           password: _usePassword ? _secret.text : null,
-          replaceKeyPem: !_usePassword ? _secret.text : null,
+          replaceKeyPem: !_usePassword && !_keyFromVault ? _secret.text : null,
+          replaceWithKeyId:
+              !_usePassword && _keyFromVault ? _vaultKeyId : null,
         );
       } else {
         await widget.app.addHost(
@@ -102,7 +114,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
           port: int.parse(_port.text.trim()),
           username: _username.text.trim(),
           usePassword: _usePassword,
-          secret: _secret.text,
+          secret: (!_usePassword && _keyFromVault) ? '' : _secret.text,
+          existingKeyId: (!_usePassword && _keyFromVault) ? _vaultKeyId : null,
           groupId: _newGroupMode ? null : _groupId,
           newGroupName: _newGroupMode ? _newGroup.text : null,
         );
@@ -209,24 +222,22 @@ class _AddHostDialogState extends State<AddHostDialog> {
                 const SizedBox(height: 12),
                 _authSegment(),
                 const SizedBox(height: 12),
-                _field(
-                  _secret,
-                  _secretLabel,
-                  obscure: _usePassword && !_secretVisible,
-                  minLines: _usePassword ? 1 : 4,
-                  maxLines: _usePassword ? 1 : 6,
-                  validator: _secretValidator,
-                  suffix: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // 粘贴按钮（不依赖系统 Cmd+V 行为，安卓/桌面都可靠）
-                      IconButton(
-                        icon: const Icon(Icons.content_paste,
-                            size: 17, color: Et.textSecondary),
-                        tooltip: '粘贴',
-                        onPressed: _pasteSecret,
-                      ),
-                      if (_usePassword)
+                if (_usePassword)
+                  _field(
+                    _secret,
+                    _secretLabel,
+                    obscure: !_secretVisible,
+                    validator: _secretValidator,
+                    suffix: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 粘贴按钮（不依赖系统 Cmd+V 行为，安卓/桌面都可靠）
+                        IconButton(
+                          icon: const Icon(Icons.content_paste,
+                              size: 17, color: Et.textSecondary),
+                          tooltip: '粘贴',
+                          onPressed: _pasteSecret,
+                        ),
                         IconButton(
                           icon: Icon(
                               _secretVisible
@@ -238,9 +249,29 @@ class _AddHostDialogState extends State<AddHostDialog> {
                           onPressed: () =>
                               setState(() => _secretVisible = !_secretVisible),
                         ),
-                    ],
-                  ),
-                ),
+                      ],
+                    ),
+                  )
+                else ...[
+                  // 私钥来源：Keychain 可选时提供切换（粘贴新 PEM / 复用已有密钥）
+                  if (widget.app.keys.isNotEmpty) _keySourceSegment(),
+                  if (_keyFromVault)
+                    _vaultKeyDropdown()
+                  else
+                    _field(
+                      _secret,
+                      _secretLabel,
+                      minLines: 4,
+                      maxLines: 6,
+                      validator: _secretValidator,
+                      suffix: IconButton(
+                        icon: const Icon(Icons.content_paste,
+                            size: 17, color: Et.textSecondary),
+                        tooltip: '粘贴',
+                        onPressed: _pasteSecret,
+                      ),
+                    ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 10),
                   Text('保存失败: $_error',
@@ -288,7 +319,14 @@ class _AddHostDialogState extends State<AddHostDialog> {
           : const BorderRadius.horizontal(right: Radius.circular(20));
       return Expanded(
         child: GestureDetector(
-          onTap: _isEdit ? null : () => setState(() => _usePassword = value),
+          // 编辑模式只读（切换=删除重建，避免凭据歧义）；新建模式切回口令时
+          // 清空私域输入：先粘 PEM 再切口令会把 PEM 当口令保存（评审 P2）
+          onTap: _isEdit || value == _usePassword
+              ? null
+              : () => setState(() {
+                    _usePassword = value;
+                    if (value) _secret.clear();
+                  }),
           child: Container(
             height: 40,
             alignment: Alignment.center,
@@ -310,6 +348,71 @@ class _AddHostDialogState extends State<AddHostDialog> {
       borderRadius: BorderRadius.circular(20),
       child: Row(children: [seg(true, '口令'), seg(false, '私钥')]),
     );
+  }
+
+  /// 私钥来源分段：粘贴新 PEM / 从 Keychain 选择
+  /// （Keychain 为空时不显示，Keychain 里复用已有密钥免去重传）。
+  Widget _keySourceSegment() {
+    Widget seg(bool vault, String label) {
+      final sel = _keyFromVault == vault;
+      final radius = vault
+          ? const BorderRadius.horizontal(right: Radius.circular(16))
+          : const BorderRadius.horizontal(left: Radius.circular(16));
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _keyFromVault = vault),
+          child: Container(
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: sel ? Et.primaryBtn : const Color(0xFFF1F2F5),
+              borderRadius: radius,
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: sel ? Colors.white : Et.textSecondary)),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Row(
+            children: [seg(false, '粘贴新 PEM'), seg(true, '从 Keychain 选择')]),
+      ),
+    );
+  }
+
+  /// Keychain 密钥下拉（编辑模式预选当前密钥）。
+  Widget _vaultKeyDropdown() {
+    final keys = widget.app.keys;
+    final valid = _vaultKeyId != null && keys.any((k) => k.id == _vaultKeyId);
+    return DropdownButtonFormField<String>(
+      // 未选中必须是 null（空串不在 items 里，DropdownButtonFormField 会断言失败）
+      initialValue: valid ? _vaultKeyId! : null,
+      decoration: _dec('从 Keychain 选择密钥'),
+      items: [
+        for (final k in keys)
+          DropdownMenuItem(
+            value: k.id,
+            child: Text('${k.label}（${_fpTail(k.fingerprint)}）',
+                overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      onChanged: (v) =>
+          setState(() => _vaultKeyId = (v == null || v.isEmpty) ? null : v),
+      validator: (v) => (v == null || v.isEmpty) ? '请选择要使用的密钥' : null,
+    );
+  }
+
+  String _fpTail(String fp) {
+    final body = fp.startsWith('SHA256:') ? fp.substring(7) : fp;
+    return body.length <= 8 ? fp : '…${body.substring(body.length - 8)}';
   }
 
   String get _secretLabel {

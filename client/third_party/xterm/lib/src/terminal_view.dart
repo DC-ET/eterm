@@ -49,6 +49,11 @@ class TerminalView extends StatefulWidget {
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
+    this.onDoubleTap,
+    this.onLongPressStart,
+    this.onLongPressMoveUpdate,
+    this.onLongPressEnd,
+    this.onLongPressCancel,
   });
 
   /// The underlying terminal that this widget renders.
@@ -141,6 +146,19 @@ class TerminalView extends StatefulWidget {
   /// keys to the application. This is standard behavior for most terminal
   /// emulators. True by default.
   final bool simulateScroll;
+
+  /// Called when the user double-taps the terminal. When provided, this
+  /// replaces the default double-tap behavior (select word) — e.g. mobile
+  /// shells use double-tap to send a Tab (eterm M1 gesture spec).
+  final GestureTapDownCallback? onDoubleTap;
+
+  /// Long-press callbacks. When provided, they replace the default long-press
+  /// behavior (select word / extend selection) so the host app can implement
+  /// custom long-press interactions (arrow-key drag, paste menu, ...).
+  final GestureLongPressStartCallback? onLongPressStart;
+  final GestureLongPressMoveUpdateCallback? onLongPressMoveUpdate;
+  final GestureLongPressUpCallback? onLongPressEnd;
+  final VoidCallback? onLongPressCancel;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -305,6 +323,11 @@ class TerminalViewState extends State<TerminalView> {
           widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
       onSecondaryTapUp:
           widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
+      onDoubleTap: widget.onDoubleTap,
+      onLongPressStart: widget.onLongPressStart,
+      onLongPressMoveUpdate: widget.onLongPressMoveUpdate,
+      onLongPressEnd: widget.onLongPressEnd,
+      onLongPressCancel: widget.onLongPressCancel,
       readOnly: widget.readOnly,
       child: child,
     );

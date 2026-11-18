@@ -11,6 +11,7 @@ import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea
 import 'package:xterm/xterm.dart';
 
 import '../services/api_client.dart';
+import '../services/fg_service.dart';
 import '../services/realtime.dart';
 import '../services/app_state.dart';
 import 'hosts_page.dart';
@@ -69,6 +70,7 @@ class _ShellPageState extends State<ShellPage> {
         activeTab = tabs.length - 1;
       }
     });
+    FgService.setKeepAlive(tabs.isNotEmpty); // 前台服务保活 SSH（M1）
   }
 
   void closeTab(int i) {
@@ -82,10 +84,12 @@ class _ShellPageState extends State<ShellPage> {
         activeTab = tabs.length - 1;
       }
     });
+    FgService.setKeepAlive(tabs.isNotEmpty);
   }
 
   Future<void> _logout() async {
     realtime.stop();
+    FgService.setKeepAlive(false);
     try {
       await widget.api.logout();
     } catch (_) {}
@@ -98,6 +102,7 @@ class _ShellPageState extends State<ShellPage> {
   /// token 失效（401）：静默回登录页。
   void _onAuthLost() {
     realtime.stop();
+    FgService.setKeepAlive(false);
     local.clearLocal();
     if (!mounted) return;
     Navigator.of(context)

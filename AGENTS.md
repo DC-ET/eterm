@@ -43,6 +43,8 @@ client/app/scripts/release_android.sh        # 产物 sha256 双端校验
 - **SPM 已全局关闭**（`flutter config --no-enable-swift-package-manager`，3.50 默认开但生成器丢插件）；图标经 `flutter_launcher_icons`（`dart run flutter_launcher_icons`）生成，源图在 `client/app/assets/icon/`。
 - macOS 自带 bash 3.2：shell 脚本里紧邻非 ASCII 字符的变量必须 `${}` 花括号。
 - Android release 必须含 INTERNET 权限（main AndroidManifest）——曾被删导致真机 DNS 失败。
+- **任何 `flutter build apk`（含 debug）都要钉 `JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home`**：机器默认 java_home 指向 GraalVM，其 jlink 过不了 AGP 的 JdkImageTransform（assembleDebug 直接失败，报 `core-for-system-modules.jar` transform 错）。release 脚本已钉，手动构建易踩。
+- **file_selector 的 `getSaveLocation`/saveFile 在 Android 未实现**（openFile/getDirectoryPath 可用）——下载落盘不能走系统另存为；SFTP 下载写应用专属外部目录（`Android/data/<pkg>/files/sftp-local`，免权限）。SFTP 传输用 `<目标>.eterm-part` 暂存 + 完成后改名，取消/失败保留暂存，重试续传（rust/api/sftp.rs）。
 - 服务器磁盘紧张（~86%），APK 按 `docs/eterm-发布流程.md` 约定**覆盖同一文件**，大版本才留副本。
 
 ## 测试账号与环境

@@ -337,7 +337,7 @@ pub fn super_utc_now_rfc3339() -> String {
 pub struct EventRow {
     pub id: i64,
     pub ts: String,
-    pub kind: String,  // connect_ok | connect_fail | disconnect | host_add | host_edit | host_delete | key_delete
+    pub kind: String, // connect_ok | connect_fail | disconnect | host_add | host_edit | host_delete | key_import | key_generate | key_edit | key_deploy | key_delete | identity_edit | identity_delete
     pub detail: String,
 }
 

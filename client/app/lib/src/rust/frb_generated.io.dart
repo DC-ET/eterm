@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/keychain.dart';
 import 'api/local.dart';
 import 'api/portfw.dart';
 import 'api/sftp.dart';
@@ -17,6 +18,7 @@ import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
 import 'store.dart';
+import 'util/sshkey.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustLibApiImplPlatform({
@@ -44,10 +46,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  SftpEntry dco_decode_box_autoadd_sftp_entry(dynamic raw);
+
+  @protected
   EventRow dco_decode_event_row(dynamic raw);
 
   @protected
+  ExecResult dco_decode_exec_result(dynamic raw);
+
+  @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  KeyGenerateResult dco_decode_key_generate_result(dynamic raw);
 
   @protected
   KnownHost dco_decode_known_host(dynamic raw);
@@ -71,6 +85,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SftpEntry> dco_decode_list_sftp_entry(dynamic raw);
 
   @protected
+  SftpEntry? dco_decode_opt_box_autoadd_sftp_entry(dynamic raw);
+
+  @protected
   SftpEntry dco_decode_sftp_entry(dynamic raw);
 
   @protected
@@ -78,6 +95,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshEvent dco_decode_ssh_event(dynamic raw);
+
+  @protected
+  SshKeyMeta dco_decode_ssh_key_meta(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -114,10 +134,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  SftpEntry sse_decode_box_autoadd_sftp_entry(SseDeserializer deserializer);
+
+  @protected
   EventRow sse_decode_event_row(SseDeserializer deserializer);
 
   @protected
+  ExecResult sse_decode_exec_result(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  KeyGenerateResult sse_decode_key_generate_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   KnownHost sse_decode_known_host(SseDeserializer deserializer);
@@ -141,6 +175,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SftpEntry> sse_decode_list_sftp_entry(SseDeserializer deserializer);
 
   @protected
+  SftpEntry? sse_decode_opt_box_autoadd_sftp_entry(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SftpEntry sse_decode_sftp_entry(SseDeserializer deserializer);
 
   @protected
@@ -148,6 +187,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshEvent sse_decode_ssh_event(SseDeserializer deserializer);
+
+  @protected
+  SshKeyMeta sse_decode_ssh_key_meta(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -163,9 +205,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -192,10 +231,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_sftp_entry(
+    SftpEntry self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_event_row(EventRow self, SseSerializer serializer);
 
   @protected
+  void sse_encode_exec_result(ExecResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_key_generate_result(
+    KeyGenerateResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_known_host(KnownHost self, SseSerializer serializer);
@@ -228,6 +285,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_sftp_entry(
+    SftpEntry? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_sftp_entry(SftpEntry self, SseSerializer serializer);
 
   @protected
@@ -235,6 +298,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ssh_event(SshEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_key_meta(SshKeyMeta self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
@@ -250,9 +316,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
 }
 
 // Section: wire_class

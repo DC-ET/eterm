@@ -7,8 +7,12 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `download_inner`, `get`, `on_runtime`, `runtime`, `upload_inner`
+// These functions are ignored because they are not marked as `pub`: `check_cancel`, `cleanup_cancel`, `download_inner`, `get`, `on_runtime`, `register_cancel`, `resume_offset`, `runtime`, `upload_inner`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `SftpConn`
+
+/// 取消传输（幂等：任务已结束/不存在也返回 Ok，调用方无需与任务结束竞态判断）。
+void sftpTransferCancel({required int jobId}) =>
+    RustLib.instance.api.crateApiSftpSftpTransferCancel(jobId: jobId);
 
 /// 建立 SFTP 会话（连接 + 认证 + sftp 子系统握手全部完成后才返回 id）。
 /// 失败直接返回错误文本（与终端不同：此处无事件流，错误走返回值更直观）。
@@ -34,6 +38,10 @@ void sftpDisconnect({required BigInt id}) =>
 Future<String> sftpRealpath({required BigInt id, required String path}) =>
     RustLib.instance.api.crateApiSftpSftpRealpath(id: id, path: path);
 
+/// 单文件信息（None = 不存在）。供入队冲突检测与远端编辑 mtime 校验。
+Future<SftpEntry?> sftpStat({required BigInt id, required String path}) =>
+    RustLib.instance.api.crateApiSftpSftpStat(id: id, path: path);
+
 /// 列目录（"." 与 ".." 已滤除）。失败返回错误文本（如目录不存在）。
 Future<List<SftpEntry>> sftpList({required BigInt id, required String path}) =>
     RustLib.instance.api.crateApiSftpSftpList(id: id, path: path);
@@ -54,26 +62,34 @@ Future<void> sftpRename({
   required String to,
 }) => RustLib.instance.api.crateApiSftpSftpRename(id: id, from: from, to: to);
 
-/// 下载远端文件到本地路径。已存在的本地文件会被覆盖。
+/// 下载远端文件到本地路径（覆盖语义）。resume=true 从上次暂存续传。
 Stream<SftpProgress> sftpDownload({
   required BigInt id,
+  required int jobId,
   required String remotePath,
   required String localPath,
+  required bool resume,
 }) => RustLib.instance.api.crateApiSftpSftpDownload(
   id: id,
+  jobId: jobId,
   remotePath: remotePath,
   localPath: localPath,
+  resume: resume,
 );
 
-/// 上传本地文件到远端路径。已存在的远端文件会被覆盖。
+/// 上传本地文件到远端路径（覆盖语义）。resume=true 从上次暂存续传。
 Stream<SftpProgress> sftpUpload({
   required BigInt id,
+  required int jobId,
   required String localPath,
   required String remotePath,
+  required bool resume,
 }) => RustLib.instance.api.crateApiSftpSftpUpload(
   id: id,
+  jobId: jobId,
   localPath: localPath,
   remotePath: remotePath,
+  resume: resume,
 );
 
 /// 目录项（浏览列表行）。
@@ -109,6 +125,8 @@ class SftpEntry {
 
 /// 传输进度事件（download/upload 共用；total 为 0 表示未知大小）。
 class SftpProgress {
+  /// 任务 id（Dart 入队时指定，进度/取消按此关联）。
+  final int jobId;
   final BigInt transferred;
   final BigInt total;
 
@@ -116,19 +134,22 @@ class SftpProgress {
   final String path;
 
   const SftpProgress({
+    required this.jobId,
     required this.transferred,
     required this.total,
     required this.path,
   });
 
   @override
-  int get hashCode => transferred.hashCode ^ total.hashCode ^ path.hashCode;
+  int get hashCode =>
+      jobId.hashCode ^ transferred.hashCode ^ total.hashCode ^ path.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is SftpProgress &&
           runtimeType == other.runtimeType &&
+          jobId == other.jobId &&
           transferred == other.transferred &&
           total == other.total &&
           path == other.path;

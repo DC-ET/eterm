@@ -26,4 +26,6 @@ russh-sftp = "3.0.1"
 
 [dev-dependencies]
 tempfile = "3"
+# known-answer 测试用固定 seed 构造 Ed25519 密钥（主代码不经此 crate：russh-keys 内部类型已够）
+ed25519-dalek = "2"
 

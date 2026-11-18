@@ -57,7 +57,8 @@ pub fn open_field(key: &[u8], sealed: &str) -> Result<Vec<u8>, CoreError> {
 }
 
 // 标准 base64（std 无内置，避免引入额外依赖，此处实现 RFC4648 子集：A-Za-z0-9+/，无填充输出由调用方保证兼容）
-fn base64_encode(data: &[u8]) -> String {
+// pub(crate)：OpenSSH 私钥 PEM 编码（util/sshkey.rs）复用同一实现
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {

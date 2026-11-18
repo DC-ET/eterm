@@ -33,7 +33,9 @@ class ApiClient {
       _http ??= HttpClient()..connectionTimeout = const Duration(seconds: 10);
 
   Map<String, String> _headers() => {
-        'content-type': 'application/json',
+        // charset 必须显式：dart:io 无 charset 时按 latin1 编码请求体，
+        // 中文标签/口令会直接抛 "Contains invalid characters"
+        'content-type': 'application/json; charset=utf-8',
         if (token != null) 'authorization': 'Bearer $token',
       };
 
