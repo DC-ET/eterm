@@ -16,7 +16,7 @@ part 'ssh.freezed.dart';
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `check_server_key`, `clone`, `fmt`
 
 /// 建连+认证+开 PTY shell（后台执行），立即返回会话 id。
-/// auth_kind：`password`（secret=密码）| `key`（secret=OpenSSH PEM 私钥文本，暂不支持密码短语）。
+/// auth_kind：`password`（secret=口令）| `key`（secret=OpenSSH PEM 私钥文本，暂不支持口令短语）。
 /// 失败不在此返回，以 `SshEvent::Closed(原因)` 送达事件流。
 BigInt sshConnect({
   required String host,

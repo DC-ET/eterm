@@ -11,34 +11,22 @@ import 'package:flutter_test/flutter_test.dart';
 class FakeTransport implements SftpTransport {
   final controllers = <int, StreamController<sftp.SftpProgress>>{};
   final cancels = <int>[];
-  // (jobId, remotePath, resume) 每次真实启动记录一条
-  final started = <(int, String, bool)>[];
+  // (jobId, 关键路径, resume, kind) 每次真实启动记录一条
+  final started = <(int, String, bool, SftpJobKind)>[];
 
   StreamController<sftp.SftpProgress> _ctrl(int jobId) =>
-      controllers.putIfAbsent(jobId, () => StreamController<sftp.SftpProgress>());
+      controllers.putIfAbsent(
+          jobId, () => StreamController<sftp.SftpProgress>());
 
   @override
-  Stream<sftp.SftpProgress> upload({
-    required BigInt id,
-    required int jobId,
-    required String localPath,
-    required String remotePath,
-    required bool resume,
-  }) {
-    started.add((jobId, remotePath, resume));
-    return _ctrl(jobId).stream;
-  }
-
-  @override
-  Stream<sftp.SftpProgress> download({
-    required BigInt id,
-    required int jobId,
-    required String remotePath,
-    required String localPath,
-    required bool resume,
-  }) {
-    started.add((jobId, remotePath, resume));
-    return _ctrl(jobId).stream;
+  Stream<sftp.SftpProgress> start(SftpTransferJob job) {
+    // 与旧约定一致：上传记目标路径，下载/直传记源路径
+    final path = switch (job.kind) {
+      SftpJobKind.upload => job.pathTo,
+      _ => job.pathFrom,
+    };
+    started.add((job.jobId, path, job.resume, job.kind));
+    return _ctrl(job.jobId).stream;
   }
 
   @override
@@ -61,26 +49,27 @@ class FakeTransport implements SftpTransport {
   void complete(int jobId) => _ctrl(jobId).close();
 }
 
-SftpTransferQueue _queue(FakeTransport t) => SftpTransferQueue(
-      sessionId: BigInt.from(1),
-      concurrency: 2,
-      transport: t,
-    );
+SftpTransferQueue _queue(FakeTransport t) =>
+    SftpTransferQueue(concurrency: 2, transport: t);
 
 /// 测试里的入队助手：enqueue 判空去重后断言必有任务。
 SftpTransferJob _enq(
   SftpTransferQueue q, {
-  required SftpDirection direction,
-  required String localPath,
-  required String remotePath,
+  required SftpJobKind kind,
+  required String pathFrom,
+  required String pathTo,
   required String name,
   bool resume = false,
+  BigInt? sessionFrom,
+  BigInt? sessionTo,
 }) =>
     q.enqueue(
-      direction: direction,
-      localPath: localPath,
-      remotePath: remotePath,
+      kind: kind,
+      pathFrom: pathFrom,
+      pathTo: pathTo,
       name: name,
+      sessionFrom: sessionFrom,
+      sessionTo: sessionTo,
       resume: resume,
     )!;
 
@@ -104,19 +93,19 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final a = _enq(q,
-          direction: SftpDirection.upload,
-          localPath: 'l1',
-          remotePath: 'r1',
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
           name: 'a');
       final b = _enq(q,
-          direction: SftpDirection.upload,
-          localPath: 'l2',
-          remotePath: 'r2',
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
           name: 'b');
       final c = _enq(q,
-          direction: SftpDirection.upload,
-          localPath: 'l3',
-          remotePath: 'r3',
+          kind: SftpJobKind.upload,
+          pathFrom: 'l3',
+          pathTo: 'r3',
           name: 'c');
       expect(a.state, SftpJobState.running);
       expect(b.state, SftpJobState.running);
@@ -134,11 +123,11 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final a = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r1', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r1', name: 'a');
       _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r2', name: 'b');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r2', name: 'b');
       final c = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r3', name: 'c');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r3', name: 'c');
       expect(c.state, SftpJobState.queued);
       t.fail(a.jobId, '网络错误');
       await pumpEventQueue();
@@ -151,9 +140,9 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final job = _enq(q,
-          direction: SftpDirection.download,
-          localPath: 'l',
-          remotePath: 'r',
+          kind: SftpJobKind.download,
+          pathFrom: 'r',
+          pathTo: 'l',
           name: 'f');
       t.emit(job.jobId, 512, 1024);
       await pumpEventQueue();
@@ -166,7 +155,7 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final job = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r', name: 'f');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r', name: 'f');
       q.cancel(job);
       expect(t.cancels, [job.jobId]);
       t.fail(job.jobId, '传输已取消');
@@ -178,10 +167,12 @@ void main() {
     test('取消排队中任务：直接置态，不触 Rust', () async {
       final t = FakeTransport();
       final q = _queue(t);
-      _enq(q, direction: SftpDirection.upload, localPath: 'l', remotePath: 'r1', name: 'a');
-      _enq(q, direction: SftpDirection.upload, localPath: 'l', remotePath: 'r2', name: 'b');
+      _enq(q,
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r1', name: 'a');
+      _enq(q,
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r2', name: 'b');
       final c = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r3', name: 'c');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r3', name: 'c');
       expect(c.state, SftpJobState.queued);
       q.cancel(c);
       expect(c.state, SftpJobState.canceled);
@@ -193,9 +184,9 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final job = _enq(q,
-          direction: SftpDirection.upload,
-          localPath: 'l',
-          remotePath: 'r',
+          kind: SftpJobKind.upload,
+          pathFrom: 'l',
+          pathTo: 'r',
           name: 'f',
           resume: false);
       final oldId = job.jobId;
@@ -208,10 +199,82 @@ void main() {
       expect(job.resume, isTrue);
       expect(job.state, SftpJobState.running);
       await pumpEventQueue();
-      expect(t.started.last, (job.jobId, 'r', true));
+      expect(t.started.last, (job.jobId, 'r', true, SftpJobKind.upload));
       t.complete(job.jobId);
       await pumpEventQueue();
       expect(job.state, SftpJobState.done);
+      q.dispose();
+    });
+
+    test('远端→远端 copy 失败重试：同样 resume=true；tar/copyDir 重试为全新执行', () async {
+      final t = FakeTransport();
+      final q = _queue(t);
+      final cp = _enq(q,
+          kind: SftpJobKind.copy,
+          pathFrom: 'ra',
+          pathTo: 'rb',
+          name: 'c',
+          sessionFrom: BigInt.one,
+          sessionTo: BigInt.two);
+      t.fail(cp.jobId, '网络错误');
+      await pumpEventQueue();
+      q.retry(cp);
+      expect(cp.resume, isTrue);
+      expect(cp.state, SftpJobState.running);
+      await pumpEventQueue();
+      expect(t.started.last, (cp.jobId, 'ra', true, SftpJobKind.copy));
+
+      final tar = _enq(q,
+          kind: SftpJobKind.tarDownload,
+          pathFrom: 'rdir',
+          pathTo: 'l.tar.gz',
+          name: 't',
+          sessionFrom: BigInt.one,
+          sessionTo: null);
+      t.fail(tar.jobId, '网络错误');
+      await pumpEventQueue();
+      q.retry(tar);
+      expect(tar.resume, isFalse, reason: '流式压缩不可续传');
+
+      final cd = _enq(q,
+          kind: SftpJobKind.copyDir,
+          pathFrom: 'ra/dir',
+          pathTo: 'rb/dir',
+          name: 'd',
+          sessionFrom: BigInt.one,
+          sessionTo: BigInt.two);
+      t.fail(cd.jobId, '网络错误');
+      await pumpEventQueue();
+      q.retry(cd);
+      expect(cd.resume, isFalse, reason: '目录复制逐文件续传，重试为全新执行');
+      q.dispose();
+    });
+
+    test('重试跨 kind 同目标同样拒绝（与 enqueue 去重口径一致，防并发写同一暂存）', () async {
+      final t = FakeTransport();
+      final q = _queue(t);
+      final failedCopy = _enq(q,
+          kind: SftpJobKind.copy,
+          pathFrom: 'ra',
+          pathTo: 'r',
+          name: 'a',
+          sessionFrom: BigInt.one,
+          sessionTo: BigInt.one);
+      t.fail(failedCopy.jobId, '网络错误');
+      await pumpEventQueue();
+      // 同目标换成 upload 重新入队（失败任务是终态，enqueue 放行）
+      final fresh = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r',
+          name: 'a',
+          sessionTo: BigInt.one);
+      expect(fresh.state, SftpJobState.running);
+      // 此时重试失败的 copy → 跨 kind 同目标冲突，静默拒绝
+      final idBefore = failedCopy.jobId;
+      q.retry(failedCopy);
+      expect(failedCopy.state, SftpJobState.failed);
+      expect(failedCopy.jobId, idBefore);
       q.dispose();
     });
 
@@ -219,7 +282,7 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final job = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r', name: 'f');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r', name: 'f');
       final oldId = job.jobId;
       t.fail(oldId, '网络错误');
       await pumpEventQueue();
@@ -241,7 +304,7 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final job = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r', name: 'f');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r', name: 'f');
       t.fail(job.jobId, '打开本地文件失败: no such file');
       await pumpEventQueue();
       expect(job.state, SftpJobState.failed);
@@ -253,12 +316,12 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final failed = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l1', remotePath: 'r', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l1', pathTo: 'r', name: 'a');
       t.fail(failed.jobId, '网络错误');
       await pumpEventQueue();
       // 同目标（远端 r）重新入队 → 允许（失败任务是终态不阻塞）
       final fresh = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l2', remotePath: 'r', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l2', pathTo: 'r', name: 'a');
       expect(fresh.state, SftpJobState.running);
       // 此时重试失败任务 → 同目标冲突，静默拒绝（防并发写同一暂存）
       final idBefore = failed.jobId;
@@ -275,36 +338,55 @@ void main() {
       q.dispose();
     });
 
-    test('同目标去重：同方向同目标路径拒绝入队（防并发写同一暂存）', () {
+    test('同目标去重：同 kind 同目标路径拒绝入队（防并发写同一暂存）', () {
       final t = FakeTransport();
       final q = _queue(t);
       _enq(q,
-          direction: SftpDirection.upload, localPath: 'l1', remotePath: 'r', name: 'a');
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r',
+          name: 'a',
+          sessionTo: BigInt.one);
       // 同远端目标 → 拒绝
       expect(
           q.enqueue(
-            direction: SftpDirection.upload,
-            localPath: 'l2',
-            remotePath: 'r',
+            kind: SftpJobKind.upload,
+            pathFrom: 'l2',
+            pathTo: 'r',
             name: 'a',
+            sessionTo: BigInt.one,
           ),
           isNull);
-      // 同远端目标但下载方向（目标在本地侧）→ 允许
+      // 同 kind 不同目标 → 允许
       expect(
           q.enqueue(
-            direction: SftpDirection.download,
-            localPath: 'd1',
-            remotePath: 'r',
-            name: 'a',
+            kind: SftpJobKind.upload,
+            pathFrom: 'l3',
+            pathTo: 'r2',
+            name: 'b',
+            sessionTo: BigInt.one,
           ),
           isNotNull);
-      // 同方向不同目标 → 允许
+      // 不同 kind 同目标同会话（上传到 r 与直传到 r 写同一暂存）→ 拒绝
       expect(
           q.enqueue(
-            direction: SftpDirection.upload,
-            localPath: 'l3',
-            remotePath: 'r2',
-            name: 'b',
+            kind: SftpJobKind.copy,
+            pathFrom: 'ra',
+            pathTo: 'r',
+            name: 'c',
+            sessionFrom: BigInt.one,
+            sessionTo: BigInt.one,
+          ),
+          isNull);
+      // 不同 kind 同目标但不同会话（不同主机互不相干）→ 允许
+      expect(
+          q.enqueue(
+            kind: SftpJobKind.copy,
+            pathFrom: 'ra',
+            pathTo: 'r',
+            name: 'c',
+            sessionFrom: BigInt.two,
+            sessionTo: BigInt.two,
           ),
           isNotNull);
       q.dispose();
@@ -314,18 +396,18 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final a = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r', name: 'a');
       final b = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r2', name: 'b');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r2', name: 'b');
       t.complete(a.jobId);
       t.complete(b.jobId);
       await pumpEventQueue();
       final failed = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r3', name: 'c');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r3', name: 'c');
       t.fail(failed.jobId, 'x');
       await pumpEventQueue();
       final canceled = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r4', name: 'd');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r4', name: 'd');
       q.cancel(canceled);
       t.fail(canceled.jobId, '传输已取消');
       await pumpEventQueue();
@@ -338,11 +420,11 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final running = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r', name: 'a');
       final running2 = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r2', name: 'b');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r2', name: 'b');
       final queued = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r3', name: 'c');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r3', name: 'c');
       await q.shutdown();
       expect(t.cancels, [running.jobId, running2.jobId]);
       expect(running.state, SftpJobState.canceled);
@@ -355,19 +437,19 @@ void main() {
       final t = FakeTransport();
       final q = _queue(t);
       final a = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r1', name: 'a');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r1', name: 'a');
       final b = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r2', name: 'b');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r2', name: 'b');
       t.complete(a.jobId);
       t.complete(b.jobId);
       await pumpEventQueue();
       final failed = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r3', name: 'c');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r3', name: 'c');
       t.fail(failed.jobId, 'x');
       await pumpEventQueue();
       expect(failed.state, SftpJobState.failed);
       final running = _enq(q,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r4', name: 'd');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r4', name: 'd');
       expect(running.state, SftpJobState.running);
       q.dispose();
 
@@ -380,22 +462,23 @@ void main() {
       expect(q.jobs.length, 4);
       expect(
           q.enqueue(
-            direction: SftpDirection.upload,
-            localPath: 'l',
-            remotePath: 'r5',
+            kind: SftpJobKind.upload,
+            pathFrom: 'l',
+            pathTo: 'r5',
             name: 'e',
           ),
           isNull);
       // 终态任务 cancel/retry 也为 no-op（未 dispose）
       final q2 = _queue(t);
       final done = _enq(q2,
-          direction: SftpDirection.upload, localPath: 'l', remotePath: 'r6', name: 'f');
+          kind: SftpJobKind.upload, pathFrom: 'l', pathTo: 'r6', name: 'f');
       t.complete(done.jobId);
       await pumpEventQueue();
       q2.cancel(done);
       q2.retry(done);
       expect(done.state, SftpJobState.done);
-      expect(t.cancels, cancelsBefore, reason: '对终态任务取消不应发出 Rust cancel');
+      expect(t.cancels, cancelsBefore,
+          reason: '对终态任务取消不应发出 Rust cancel');
       q2.dispose();
     });
   });

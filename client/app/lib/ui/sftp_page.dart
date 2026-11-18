@@ -1,7 +1,9 @@
-// SFTP 双面板文件管理页（M3）：远端 = SFTP 会话（数据面直连目标主机，不经中枢）；
-// 本地 = 沙盒可浏览目录（macOS 用户选定目录 / Android 应用专属外部目录工作区）。
-// 传输经 SftpTransferQueue 后台执行（并发 2、可取消、断点续传、失败重试），
-// 冲突策略（跳过/覆盖/改名）在入队前弹窗决策；传输进度不阻塞浏览。
+// SFTP 双侧文件管理页 v2（任务清单 #6/#7/#8/#9）：
+// - 两侧各自为「远端会话」或「本机工作区」，任选两台服务器互传，不再限制一边是本地
+// - 远端目录 → 本地：exec tar -czf - 打包压缩流式下载（<名>.tar.gz）
+// - 远端目录 → 远端：递归逐文件复制（目标同大小跳过，重试可续）
+// - 远端文件 → 远端：分块经客户端内存直传（B 侧 .eterm-part 暂存 + 改名）
+// - 传输队列跨会话（任务自带会话 id）；任务完成自动刷新目标侧列表（目标目录在浏览中时）
 // 传输暂存：<目标>.eterm-part（Rust api/sftp.rs），取消/失败保留 → 重试续传。
 
 import 'dart:async';
@@ -17,23 +19,15 @@ import '../services/app_state.dart';
 import 'sftp_edit_page.dart';
 import 'theme.dart';
 
-class SftpPage extends StatefulWidget {
-  const SftpPage({
-    super.key,
-    required this.host,
-    required this.authKind,
-    required this.secret,
-  });
-
-  final HostView host;
-  final String authKind; // password | key
-  final String secret;
-
-  @override
-  State<SftpPage> createState() => _SftpPageState();
+/// 一侧的规格：host == null 表示本机工作区。
+class SftpSideSpec {
+  const SftpSideSpec({this.host, this.authKind, this.secret});
+  final HostView? host;
+  final String? authKind; // password | key
+  final String? secret;
 }
 
-enum _Phase { connecting, live, failed }
+enum _SidePhase { localPending, localReady, connecting, live, failed }
 
 String _fmtSize(int bytes) {
   if (bytes < 1024) return '${bytes}B';
@@ -65,164 +59,211 @@ class _LocalEntry {
   final int mtime;
 }
 
-class _SftpPageState extends State<SftpPage> {
-  BigInt? _id;
-  _Phase _phase = _Phase.connecting;
-  String? _reason;
+/// 一侧的运行状态。
+class _Side {
+  _Side(this.spec);
+  final SftpSideSpec spec;
 
-  // 远端面板
-  String _rpath = '/';
-  List<sftp.SftpEntry>? _rentries; // null = 列表加载中
+  bool get isLocal => spec.host == null;
+  String get label => isLocal ? '本机' : (spec.host!.label);
 
-  // 本地面板（_lpath == null = macOS 尚未选择目录）
-  String? _lpath;
-  /// 本地浏览根：Android = 固定工作区；macOS = 用户所选目录（沙盒授权子树，根之上不可达）。
-  String? _lroot;
-  bool _lrootFixed = false; // Android 工作区固定，不提供“选择目录”
-  List<_LocalEntry>? _lentries;
+  _SidePhase phase = _SidePhase.connecting;
+  String? reason; // 连接失败原因
 
-  // 传输队列与写操作互斥
-  SftpTransferQueue? _queue;
-  bool _busy = false; // mkdir/rename/delete 等快速写操作（传输不占用）
-  bool _localActive = false; // 手机布局：当前展示哪一侧
+  BigInt? sessionId;
+  String rpath = '/';
+  List<sftp.SftpEntry>? rentries; // null = 列表加载中
+  int listSeq = 0; // 在途列举序号：慢响应不得覆盖新目录的结果（导航/自动刷新并发）
+
+  // 本地浏览（远端侧恒为 null；桌面初始 localPending 等待选目录）
+  String? lpath;
+  String? lroot;
+  bool rootFixed = false;
+  List<_LocalEntry>? lentries;
+  int localListSeq = 0;
+}
+
+class SftpDualPage extends StatefulWidget {
+  const SftpDualPage({
+    super.key,
+    required this.left,
+    required this.right,
+  });
+
+  final SftpSideSpec left;
+  final SftpSideSpec right;
+
+  @override
+  State<SftpDualPage> createState() => _SftpDualPageState();
+}
+
+class _SftpDualPageState extends State<SftpDualPage> {
+  late final _Side _l = _Side(widget.left);
+  late final _Side _r = _Side(widget.right);
+  late final List<_Side> _sides = [_l, _r];
+
+  final SftpTransferQueue _queue = SftpTransferQueue();
+
+  /// 任务完成后的自动刷新登记：job → (侧下标, 目标目录)（任务清单 #9）。
+  /// 以任务对象为键（identity）：retry 换 jobId 后同一实例仍能接住完成事件。
+  final Map<SftpTransferJob, (int, String)> _autoRefresh = {};
+
+  bool _busy = false; // mkdir/rename/delete 等快速写操作
+  int _activeSide = 0; // 手机布局：当前展示哪侧
 
   @override
   void initState() {
     super.initState();
-    _connect();
-    _initLocal();
+    for (final s in _sides) {
+      if (s.isLocal) {
+        s.phase = _SidePhase.localPending;
+        _initLocal(s);
+      } else {
+        _connect(s);
+      }
+    }
+    _queue.addListener(_onQueueChanged);
   }
 
   @override
   void dispose() {
-    final q = _queue;
-    _queue = null;
-    if (q != null) {
-      unawaited(q.shutdown());
-      q.dispose();
-    }
-    final id = _id;
-    if (id != null) {
-      try {
-        sftp.sftpDisconnect(id: id);
-      } catch (_) {}
+    _queue.removeListener(_onQueueChanged);
+    unawaited(_queue.shutdown());
+    _queue.dispose();
+    for (final s in _sides) {
+      final id = s.sessionId;
+      if (id != null) {
+        try {
+          sftp.sftpDisconnect(id: id);
+        } catch (_) {}
+      }
     }
     super.dispose();
   }
 
-  Future<void> _connect() async {
+  // ---------- 连接与浏览 ----------
+
+  Future<void> _connect(_Side s) async {
+    final h = s.spec.host!;
     setState(() {
-      _phase = _Phase.connecting;
-      _reason = null;
+      s.phase = _SidePhase.connecting;
+      s.reason = null;
     });
     BigInt? id;
     try {
       id = await sftp.sftpConnect(
-        host: widget.host.hostname,
-        port: widget.host.port,
-        user: widget.host.username,
-        authKind: widget.authKind,
-        secret: widget.secret,
+        host: h.hostname,
+        port: h.port,
+        user: h.username,
+        authKind: s.spec.authKind!,
+        secret: s.spec.secret!,
       );
       final real = await sftp.sftpRealpath(id: id, path: '.');
       if (!mounted) {
-        // 页面已退出（_id 尚未赋值，dispose 管不到）：显式释放，否则会话泄漏
         sftp.sftpDisconnect(id: id);
         return;
       }
       final liveId = id; // 闭包内空安全提升失效：先取局部非空副本
       setState(() {
-        _id = liveId;
-        _phase = _Phase.live;
-        _rpath = real.isEmpty ? '/' : real;
-        _queue = SftpTransferQueue(sessionId: liveId);
+        s.sessionId = liveId;
+        s.phase = _SidePhase.live;
+        s.rpath = real.isEmpty ? '/' : real;
       });
-      await _list();
+      await _list(s);
     } catch (e) {
-      // 连接成功但 realpath/列表失败：同样释放，避免泄漏（幂等）
       if (id != null) sftp.sftpDisconnect(id: id);
       if (!mounted) return;
       setState(() {
-        _phase = _Phase.failed;
-        _reason = '$e';
+        s.phase = _SidePhase.failed;
+        s.reason = '$e';
       });
     }
   }
 
-  // ---------- 远端浏览 ----------
-
-  Future<void> _list() async {
-    final id = _id;
+  Future<void> _list(_Side s) async {
+    final id = s.sessionId;
     if (id == null) return;
-    setState(() => _rentries = null);
+    final seq = ++s.listSeq;
+    setState(() => s.rentries = null);
     try {
-      final items = await sftp.sftpList(id: id, path: _rpath);
-      if (!mounted) return;
-      setState(() => _rentries = items);
+      final items = await sftp.sftpList(id: id, path: s.rpath);
+      if (!mounted || seq != s.listSeq) return; // 已发起更新的列举
+      setState(() => s.rentries = items);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _rentries = []);
+      if (!mounted || seq != s.listSeq) return;
+      setState(() => s.rentries = []);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('读取目录失败: $e')));
     }
   }
 
-  String _joinRemote(String name) =>
-      _rpath.endsWith('/') ? '$_rpath$name' : '$_rpath/$name';
+  String _joinRemote(_Side s, String name) =>
+      s.rpath.endsWith('/') ? '${s.rpath}$name' : '${s.rpath}/$name';
 
-  void _enterRemote(sftp.SftpEntry e) {
-    setState(() => _rpath = _joinRemote(e.name));
-    _list();
+  void _enterRemote(_Side s, sftp.SftpEntry e) {
+    setState(() => s.rpath = _joinRemote(s, e.name));
+    _list(s);
   }
 
-  void _upRemote() {
-    if (_rpath == '/' || _rpath.isEmpty) return;
-    final idx = _rpath.lastIndexOf('/');
-    setState(() => _rpath = idx <= 0 ? '/' : _rpath.substring(0, idx));
-    _list();
+  void _upRemote(_Side s) {
+    if (s.rpath == '/' || s.rpath.isEmpty) return;
+    final idx = s.rpath.lastIndexOf('/');
+    setState(() => s.rpath = idx <= 0 ? '/' : s.rpath.substring(0, idx));
+    _list(s);
   }
 
-  Set<String> get _remoteNames =>
-      (_rentries ?? const []).map((e) => e.name).toSet();
+  Set<String> _remoteNames(_Side s) =>
+      (s.rentries ?? const []).map((e) => e.name).toSet();
 
-  // ---------- 本地浏览 ----------
-
-  Future<void> _initLocal() async {
+  Future<void> _initLocal(_Side s) async {
     if (!Platform.isAndroid) return; // 桌面：等用户选目录
-    // Android：应用专属外部目录（免权限、系统文件管理器可见），无需 SAF 目录树
-    final ext = await getExternalStorageDirectory();
-    final base =
-        ext?.path ?? (await getApplicationDocumentsDirectory()).path;
-    final ws = Directory('$base/sftp-local');
-    await ws.create(recursive: true);
-    _lroot = ws.path;
-    _lpath = ws.path;
-    _lrootFixed = true;
-    _lsLocal();
+    try {
+      // Android：应用专属外部目录（免权限、系统文件管理器可见）
+      final ext = await getExternalStorageDirectory();
+      final base =
+          ext?.path ?? (await getApplicationDocumentsDirectory()).path;
+      final ws = Directory('$base/sftp-local');
+      await ws.create(recursive: true);
+      if (!mounted) return;
+      setState(() {
+        s.lroot = ws.path;
+        s.lpath = ws.path;
+        s.rootFixed = true;
+        s.phase = _SidePhase.localReady;
+      });
+      _lsLocal(s);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        s.phase = _SidePhase.failed;
+        s.reason = '初始化本机目录失败: $e';
+      });
+    }
   }
 
-  Future<void> _pickLocalRoot() async {
+  Future<void> _pickLocalRoot(_Side s) async {
     try {
       final dir = await getDirectoryPath();
-      if (dir == null) return;
+      if (dir == null || !mounted) return;
       setState(() {
-        _lroot = dir;
-        _lpath = dir;
-        _lentries = null;
+        s.lroot = dir;
+        s.lpath = dir;
+        s.lentries = null;
+        s.phase = _SidePhase.localReady;
       });
-      _lsLocal();
+      _lsLocal(s);
     } catch (e) {
       _err('选择目录失败: $e');
     }
   }
 
-  Future<void> _lsLocal() async {
-    final dir = _lpath;
+  Future<void> _lsLocal(_Side s) async {
+    final dir = s.lpath;
     if (dir == null) return;
+    final seq = ++s.localListSeq;
     try {
       final out = <_LocalEntry>[];
-      await for (final entity
-          in Directory(dir).list(followLinks: false)) {
+      await for (final entity in Directory(dir).list(followLinks: false)) {
         final st = await entity.stat();
         out.add(_LocalEntry(
           name: entity.path.split('/').last,
@@ -235,53 +276,327 @@ class _SftpPageState extends State<SftpPage> {
         if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
-      if (!mounted) return;
-      setState(() => _lentries = out);
+      if (!mounted || seq != s.localListSeq) return; // 已发起更新的列举
+      setState(() => s.lentries = out);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _lentries = []);
+      if (!mounted || seq != s.localListSeq) return;
+      setState(() => s.lentries = []);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('读取本地目录失败: $e')));
     }
   }
 
-  String? _joinLocal(String name) {
-    final dir = _lpath;
+  String? _joinLocal(_Side s, String name) {
+    final dir = s.lpath;
     if (dir == null) return null;
     return dir.endsWith('/') ? '$dir$name' : '$dir/$name';
   }
 
-  void _enterLocal(_LocalEntry e) {
-    final p = _joinLocal(e.name);
+  void _enterLocal(_Side s, _LocalEntry e) {
+    final p = _joinLocal(s, e.name);
     if (p == null) return;
     setState(() {
-      _lpath = p;
-      _lentries = null;
+      s.lpath = p;
+      s.lentries = null;
     });
-    _lsLocal();
+    _lsLocal(s);
   }
 
-  void _upLocal() {
-    final dir = _lpath;
-    if (dir == null || _lroot == null || dir == _lroot) {
+  void _upLocal(_Side s) {
+    final dir = s.lpath;
+    if (dir == null || s.lroot == null || dir == s.lroot) {
       return; // 已在浏览根（Android 工作区 / macOS 所选目录，沙盒外不可浏览）
     }
     final idx = dir.lastIndexOf('/');
     final parent = idx <= 0 ? '/' : dir.substring(0, idx);
     if (parent == dir) return;
     setState(() {
-      _lpath = parent;
-      _lentries = null;
+      s.lpath = parent;
+      s.lentries = null;
     });
-    _lsLocal();
+    _lsLocal(s);
   }
 
-  Set<String> get _localNames =>
-      (_lentries ?? const []).map((e) => e.name).toSet();
+  Set<String> _localNames(_Side s) =>
+      (s.lentries ?? const []).map((e) => e.name).toSet();
 
-  // ---------- 冲突决策 ----------
+  // ---------- 传输（任务清单 #7/#8） ----------
 
-  /// 同名冲突弹窗：null（关闭）与 skip 同义。
+  _Side _otherOf(_Side s) => identical(s, _l) ? _r : _l;
+
+  /// 从 src 侧把条目传到对侧。按两侧类型分派：
+  ///   文件：本地→远端 upload；远端→本地 download；远端→远端 copy
+  ///   目录：远端→本地 tarDownload（<名>.tar.gz）；远端→远端 copyDir 递归复制
+  Future<void> _transfer(_Side src,
+      {sftp.SftpEntry? re, _LocalEntry? le}) async {
+    final dst = _otherOf(src);
+    final name = re?.name ?? le!.name;
+    final isDir = re?.isDir ?? le!.isDir;
+
+    // 源侧路径
+    String? pathFrom;
+    BigInt? sessionFrom;
+    SftpRemoteSpec? specFrom;
+    if (src.isLocal) {
+      pathFrom = _joinLocal(src, name);
+      if (pathFrom == null) {
+        _err('请先选择本机目录');
+        return;
+      }
+    } else {
+      pathFrom = _joinRemote(src, name);
+      sessionFrom = src.sessionId;
+      specFrom = _specOf(src);
+    }
+
+    if (isDir && src.isLocal) {
+      _err('目录上传暂不支持；请在对侧创建目录后逐文件传输');
+      return;
+    }
+
+    // 目标侧路径 + 冲突检查
+    String pathTo;
+    if (dst.isLocal) {
+      if (dst.lpath == null) {
+        if (Platform.isAndroid) {
+          await _initLocal(dst);
+        } else {
+          await _pickLocalRoot(dst);
+        }
+        if (dst.lpath == null) {
+          _err('请先在对侧选择本机目录');
+          return;
+        }
+      }
+      final localName = (!src.isLocal && isDir) ? '$name.tar.gz' : name;
+      pathTo = _joinLocal(dst, localName)!;
+      final conflict =
+          File(pathTo).existsSync() || Directory(pathTo).existsSync();
+      if (conflict) {
+        final act = await _conflictDialog(localName);
+        if (act == null || act == ConflictAction.skip) return;
+        if (act == ConflictAction.rename) {
+          pathTo = _joinLocal(
+              dst, nextAvailableName(_localNames(dst), localName))!;
+        }
+      }
+    } else {
+      if (dst.sessionId == null) {
+        _err('对侧尚未连接完成');
+        return;
+      }
+      if (dst.sessionId == src.sessionId) {
+        _err('源与目标为同一会话，无传输意义');
+        return;
+      }
+      pathTo = _joinRemote(dst, name);
+      if (_remoteNames(dst).contains(name)) {
+        if (isDir) {
+          final ok = await _confirmMerge(name);
+          if (ok != true) return; // 合并复制：已存在目录跳过同大小文件续传
+        } else {
+          final act = await _conflictDialog(name);
+          if (act == null || act == ConflictAction.skip) return;
+          if (act == ConflictAction.rename) {
+            pathTo =
+                _joinRemote(dst, nextAvailableName(_remoteNames(dst), name));
+          }
+        }
+      }
+    }
+
+    final SftpJobKind kind;
+    BigInt? sessionTo;
+    if (src.isLocal) {
+      kind = SftpJobKind.upload;
+      sessionTo = dst.sessionId;
+    } else if (dst.isLocal) {
+      kind = isDir ? SftpJobKind.tarDownload : SftpJobKind.download;
+    } else {
+      kind = isDir ? SftpJobKind.copyDir : SftpJobKind.copy;
+      sessionTo = dst.sessionId;
+    }
+    final displayName =
+        (!src.isLocal && isDir && dst.isLocal) ? '$name.tar.gz' : name;
+
+    final job = _queue.enqueue(
+      kind: kind,
+      pathFrom: pathFrom,
+      pathTo: pathTo,
+      name: displayName,
+      sessionFrom: sessionFrom,
+      sessionTo: sessionTo,
+      specFrom: specFrom,
+    );
+    if (job == null) {
+      _err('该目标已在传输队列中');
+      return;
+    }
+    _registerAutoRefresh(job, dst);
+  }
+
+  SftpRemoteSpec _specOf(_Side s) => SftpRemoteSpec(
+        host: s.spec.host!.hostname,
+        port: s.spec.host!.port,
+        user: s.spec.host!.username,
+        authKind: s.spec.authKind!,
+        secret: s.spec.secret!,
+      );
+
+  /// 任务清单 #9：入队时登记「完成后刷新目标侧列表」。
+  /// 目标侧：upload/copy/copyDir = 远端目标侧；download/tarDownload = 本机目标侧。
+  void _registerAutoRefresh(SftpTransferJob job, _Side dst) {
+    final path = job.targetPath;
+    final idx = identical(dst, _l) ? 0 : 1;
+    final dir = dst.isLocal ? _localParentOf(path) : _remoteParentOf(path);
+    _autoRefresh[job] = (idx, dir);
+  }
+
+  String _remoteParentOf(String path) {
+    final idx = path.lastIndexOf('/');
+    return idx <= 0 ? '/' : path.substring(0, idx);
+  }
+
+  String _localParentOf(String path) {
+    final idx = path.lastIndexOf('/');
+    return idx <= 0 ? '/' : path.substring(0, idx);
+  }
+
+  /// 队列状态变化：任务完成 → 若目标侧正浏览目标目录则刷新（任务清单 #9）。
+  void _onQueueChanged() {
+    if (_autoRefresh.isEmpty) return;
+    final settled = <SftpTransferJob>[];
+    for (final e in _autoRefresh.entries) {
+      final job = e.key; // 同一实例：retry 换 jobId 后仍有效
+      if (job.state == SftpJobState.done) {
+        final (sideIdx, dir) = e.value;
+        final s = _sides[sideIdx];
+        final current = s.isLocal ? (s.lpath ?? '') : s.rpath;
+        if (current == dir) {
+          if (s.isLocal) {
+            _lsLocal(s);
+          } else {
+            _list(s);
+          }
+        }
+        settled.add(job);
+      } else if (job.isTerminal) {
+        settled.add(job); // 失败/取消：清理登记
+      }
+    }
+    if (settled.isNotEmpty) {
+      setState(() {
+        for (final k in settled) {
+          _autoRefresh.remove(k);
+        }
+      });
+    }
+  }
+
+  // ---------- 远端编辑与写操作 ----------
+
+  Future<void> _editRemote(_Side s, sftp.SftpEntry e) async {
+    final id = s.sessionId;
+    if (id == null || e.isDir) return;
+    if (e.size.toInt() > 2 * 1024 * 1024) {
+      _err('文件超过 2MB，暂不支持编辑');
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SftpEditPage(
+        hostLabel: s.spec.host!.label,
+        sessionId: id,
+        remotePath: _joinRemote(s, e.name),
+      ),
+    ));
+    if (mounted) _list(s);
+  }
+
+  Future<void> _mkdir(_Side s) async {
+    final name =
+        await _promptText(s.isLocal ? '新建文件夹（本机）' : '新建文件夹', '文件夹名称');
+    if (name == null || name.isEmpty) return;
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (s.isLocal) {
+        await Directory(_joinLocal(s, name)!).create(recursive: true);
+        await _lsLocal(s);
+      } else {
+        await sftp.sftpMkdir(id: s.sessionId!, path: _joinRemote(s, name));
+        await _list(s);
+      }
+    } catch (e) {
+      _err('创建失败: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _rename(_Side s, {sftp.SftpEntry? re, _LocalEntry? le}) async {
+    final name = re?.name ?? le!.name;
+    final isDir = re?.isDir ?? le!.isDir;
+    final newName = await _promptText('重命名', '新名称', initial: name);
+    if (newName == null || newName.isEmpty || newName == name) return;
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (s.isLocal) {
+        final from = _joinLocal(s, name)!;
+        final to = _joinLocal(s, newName)!;
+        if (isDir) {
+          await Directory(from).rename(to);
+        } else {
+          await File(from).rename(to);
+        }
+        await _lsLocal(s);
+      } else {
+        await sftp.sftpRename(
+            id: s.sessionId!,
+            from: _joinRemote(s, name),
+            to: _joinRemote(s, newName));
+        await _list(s);
+      }
+    } catch (e) {
+      _err('重命名失败: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _delete(_Side s, {sftp.SftpEntry? re, _LocalEntry? le}) async {
+    final name = re?.name ?? le!.name;
+    final isDir = re?.isDir ?? le!.isDir;
+    final ok = await _confirmDelete(name, isDir, remote: !s.isLocal);
+    if (ok != true) return;
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (s.isLocal) {
+        final p = _joinLocal(s, name)!;
+        if (isDir) {
+          await Directory(p).delete(); // 仅空目录（rmdir 语义）
+        } else {
+          await File(p).delete();
+        }
+        await _lsLocal(s);
+      } else {
+        if (isDir) {
+          await sftp.sftpRmdir(id: s.sessionId!, path: _joinRemote(s, name));
+        } else {
+          await sftp.sftpRemove(id: s.sessionId!, path: _joinRemote(s, name));
+        }
+        await _list(s);
+      }
+    } catch (e) {
+      _err('删除失败: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // ---------- 通用 UI ----------
+
   Future<ConflictAction?> _conflictDialog(String name) {
     return showDialog<ConflictAction>(
       context: context,
@@ -293,18 +608,17 @@ class _SftpPageState extends State<SftpPage> {
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: Et.textPrimary)),
-        content: Text('目标侧已有同名文件，如何处理？',
+        content: Text('目标侧已有同名条目，如何处理？',
             style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.skip),
-              child: Text('跳过',
-                  style: TextStyle(color: Et.textSecondary))),
+              child: Text('跳过', style: TextStyle(color: Et.textSecondary))),
           TextButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.rename),
-              child: Text('自动改名',
-                  style: TextStyle(color: Et.textPrimary))),
+              child:
+                  Text('自动改名', style: TextStyle(color: Et.textPrimary))),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ConflictAction.overwrite),
               style: FilledButton.styleFrom(
@@ -317,223 +631,36 @@ class _SftpPageState extends State<SftpPage> {
     );
   }
 
-  // ---------- 传输入口 ----------
-
-  /// 本地 → 远端（本地面板行操作）。
-  Future<void> _uploadEntry(_LocalEntry e) async {
-    final id = _id;
-    final q = _queue;
-    if (id == null || q == null || e.isDir || _busy) return;
-    final localPath = _joinLocal(e.name);
-    if (localPath == null) return;
-    String target = e.name;
-    try {
-      final st =
-          await sftp.sftpStat(id: id, path: _joinRemote(e.name));
-      if (st != null) {
-        final act = await _conflictDialog(e.name);
-        if (act == null || act == ConflictAction.skip) return;
-        if (act == ConflictAction.rename) {
-          target = nextAvailableName(_remoteNames, e.name);
-        }
-      }
-    } catch (err) {
-      _err('检查远端文件失败: $err');
-      return;
-    }
-    if (q.enqueue(
-      direction: SftpDirection.upload,
-      localPath: localPath,
-      remotePath: _joinRemote(target),
-      name: target,
-    ) == null) {
-      _err('该文件已在传输队列中');
-    }
-  }
-
-  /// 系统“选取文件”快捷上传（SAF/NSSavePanel，任意位置）→ 远端当前目录。
-  Future<void> _uploadPicked() async {
-    final id = _id;
-    final q = _queue;
-    if (id == null || q == null || _busy) return;
-    final XFile? file = await openFile();
-    if (file == null || !mounted) return;
-    final name = file.name;
-    String target = name;
-    try {
-      final st = await sftp.sftpStat(id: id, path: _joinRemote(name));
-      if (st != null) {
-        final act = await _conflictDialog(name);
-        if (act == null || act == ConflictAction.skip) return;
-        if (act == ConflictAction.rename) {
-          target = nextAvailableName(_remoteNames, name);
-        }
-      }
-    } catch (err) {
-      _err('检查远端文件失败: $err');
-      return;
-    }
-    if (q.enqueue(
-      direction: SftpDirection.upload,
-      localPath: file.path,
-      remotePath: _joinRemote(target),
-      name: target,
-    ) == null) {
-      _err('该文件已在传输队列中');
-    }
-  }
-
-  /// 远端 → 本地当前目录。
-  Future<void> _downloadEntry(sftp.SftpEntry e) async {
-    final q = _queue;
-    if (q == null || e.isDir || _busy) return;
-    if (_lpath == null) {
-      if (Platform.isAndroid) {
-        await _initLocal();
-      } else {
-        await _pickLocalRoot();
-      }
-      if (_lpath == null) {
-        _err('请先选择本地目录');
-        return;
-      }
-    }
-    final localPath = _joinLocal(e.name)!;
-    String targetLocal = e.name;
-    final conflict = File(localPath).existsSync() ||
-        Directory(localPath).existsSync();
-    if (conflict) {
-      final act = await _conflictDialog(e.name);
-      if (act == null || act == ConflictAction.skip) return;
-      if (act == ConflictAction.rename) {
-        targetLocal = nextAvailableName(_localNames, e.name);
-      }
-    }
-    if (q.enqueue(
-      direction: SftpDirection.download,
-      remotePath: _joinRemote(e.name),
-      localPath: _joinLocal(targetLocal)!,
-      name: targetLocal,
-    ) == null) {
-      _err('该文件已在传输队列中');
-    }
-  }
-
-  // ---------- 远端编辑 ----------
-
-  Future<void> _editRemote(sftp.SftpEntry e) async {
-    final id = _id;
-    if (id == null || e.isDir) return;
-    if (e.size.toInt() > 2 * 1024 * 1024) {
-      _err('文件超过 2MB，暂不支持编辑');
-      return;
-    }
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SftpEditPage(
-        hostLabel: widget.host.label,
-        sessionId: id,
-        remotePath: _joinRemote(e.name),
+  Future<bool?> _confirmMerge(String name) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Et.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('目录「$name」已存在',
+            style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
+        content: Text('将合并复制：已存在且同大小的文件跳过，其余覆盖。',
+            style: TextStyle(
+                fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('取消', style: TextStyle(color: Et.textSecondary))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Et.primaryBtn,
+                  foregroundColor: Et.primaryBtnText,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(9))),
+              child: const Text('合并复制')),
+        ],
       ),
-    ));
-    if (mounted) _list(); // 回传可能改变了远端
+    );
   }
-
-  // ---------- 远端写操作 ----------
-
-  Future<void> _mkdirRemote() async {
-    final name = await _promptText('新建文件夹', '文件夹名称');
-    if (name == null || name.isEmpty) return;
-    final id = _id;
-    if (id == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await sftp.sftpMkdir(id: id, path: _joinRemote(name));
-      await _list();
-    } catch (e) {
-      _err('创建失败: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _renameRemote(sftp.SftpEntry e) async {
-    final name = await _promptText('重命名', '新名称', initial: e.name);
-    if (name == null || name.isEmpty || name == e.name) return;
-    final id = _id;
-    if (id == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await sftp.sftpRename(id: id, from: _joinRemote(e.name), to: _joinRemote(name));
-      await _list();
-    } catch (e2) {
-      _err('重命名失败: $e2');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _deleteRemote(sftp.SftpEntry e) async {
-    final ok = await _confirmDelete(e.name, e.isDir, remote: true);
-    if (ok != true) return;
-    final id = _id;
-    if (id == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      if (e.isDir) {
-        await sftp.sftpRmdir(id: id, path: _joinRemote(e.name));
-      } else {
-        await sftp.sftpRemove(id: id, path: _joinRemote(e.name));
-      }
-      await _list();
-    } catch (e2) {
-      _err('删除失败: $e2');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  // ---------- 本地写操作 ----------
-
-  Future<void> _mkdirLocal() async {
-    final dir = _lpath;
-    if (dir == null) {
-      _err('请先选择本地目录');
-      return;
-    }
-    final name = await _promptText('新建文件夹（本地）', '文件夹名称');
-    if (name == null || name.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      await Directory(_joinLocal(name)!).create(recursive: true);
-      await _lsLocal();
-    } catch (e) {
-      _err('创建失败: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _deleteLocal(_LocalEntry e) async {
-    final ok = await _confirmDelete(e.name, e.isDir, remote: false);
-    if (ok != true) return;
-    final p = _joinLocal(e.name);
-    if (p == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      if (e.isDir) {
-        await Directory(p).delete(); // 仅空目录（rmdir 语义）
-      } else {
-        await File(p).delete();
-      }
-      await _lsLocal();
-    } catch (e2) {
-      _err('删除失败: $e2');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  // ---------- 通用 ----------
 
   Future<bool?> _confirmDelete(String name, bool isDir,
       {required bool remote}) {
@@ -553,8 +680,8 @@ class _SftpPageState extends State<SftpPage> {
                     ? '删除远端空目录「$name」？（目录须为空）'
                     : '删除远端文件「$name」？不可恢复。')
                 : (isDir
-                    ? '删除本地空目录「$name」？（目录须为空）'
-                    : '删除本地文件「$name」？不可恢复。'),
+                    ? '删除本机空目录「$name」？（目录须为空）'
+                    : '删除本机文件「$name」？不可恢复。'),
             style: TextStyle(
                 fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
         actions: [
@@ -580,7 +707,8 @@ class _SftpPageState extends State<SftpPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  Future<String?> _promptText(String title, String label, {String? initial}) {
+  Future<String?> _promptText(String title, String label,
+      {String? initial}) {
     final ctrl = TextEditingController(text: initial ?? '');
     return showDialog<String>(
       context: context,
@@ -606,6 +734,7 @@ class _SftpPageState extends State<SftpPage> {
               onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
               style: FilledButton.styleFrom(
                   backgroundColor: Et.primaryBtn,
+                  foregroundColor: Et.primaryBtnText,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(9))),
               child: const Text('确定')),
@@ -615,15 +744,13 @@ class _SftpPageState extends State<SftpPage> {
   }
 
   void _openQueue() {
-    final q = _queue;
-    if (q == null) return;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (_) => ListenableBuilder(
-        listenable: q,
+        listenable: _queue,
         builder: (context, _) => SafeArea(
           child: SizedBox(
             height: MediaQuery.sizeOf(context).height * 0.55,
@@ -638,18 +765,18 @@ class _SftpPageState extends State<SftpPage> {
                             fontWeight: FontWeight.w700,
                             color: Et.textPrimary)),
                     const SizedBox(width: 8),
-                    Text('${q.activeCount} 个进行中',
+                    Text('${_queue.activeCount} 个进行中',
                         style: TextStyle(
                             fontSize: 12, color: Et.textSecondary)),
                     const Spacer(),
                     TextButton(
-                        onPressed: q.clearFinished,
-                        child: const Text('清已完成',
-                            style: TextStyle(fontSize: 13))),
+                        onPressed: _queue.clearFinished,
+                        child:
+                            Text('清已完成', style: TextStyle(fontSize: 13))),
                   ]),
                 ),
                 Divider(height: 1, color: Et.cardBorder),
-                Expanded(child: _queueList(q)),
+                Expanded(child: _queueList()),
               ],
             ),
           ),
@@ -658,21 +785,21 @@ class _SftpPageState extends State<SftpPage> {
     );
   }
 
-  Widget _queueList(SftpTransferQueue q) {
-    if (q.jobs.isEmpty) {
+  Widget _queueList() {
+    if (_queue.jobs.isEmpty) {
       return Center(
           child: Text('暂无传输任务',
               style: TextStyle(fontSize: 13, color: Et.textSecondary)));
     }
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      itemCount: q.jobs.length,
+      itemCount: _queue.jobs.length,
       itemBuilder: (context, i) {
-        final j = q.jobs[q.jobs.length - 1 - i]; // 最新在上
+        final j = _queue.jobs[_queue.jobs.length - 1 - i]; // 最新在上
         return _QueueRow(
           job: j,
-          onCancel: () => q.cancel(j),
-          onRetry: () => q.retry(j),
+          onCancel: () => _queue.cancel(j),
+          onRetry: () => _queue.retry(j),
         );
       },
     );
@@ -682,8 +809,9 @@ class _SftpPageState extends State<SftpPage> {
 
   @override
   Widget build(BuildContext context) {
-    Theme.of(context); // 主题切换时随 inherited 重建（Et 静态令牌不感知）
+    Theme.of(context); // 主题切换时随 inherited 重建
     final compact = MediaQuery.sizeOf(context).width < 720;
+    final title = '${_l.label} ⇄ ${_r.label}';
     return Scaffold(
       backgroundColor: Et.contentBg,
       appBar: AppBar(
@@ -694,12 +822,12 @@ class _SftpPageState extends State<SftpPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.host.label,
+            Text(title,
                 style: const TextStyle(
                     fontSize: 16.5, fontWeight: FontWeight.w600)),
             Text(compact
-                ? (_localActive ? (_lpath ?? '本地') : _rpath)
-                : '$_rpath · 本地 ${_lpath ?? "未选择"}',
+                ? _sideSubtitle(_activeSide == 0 ? _l : _r)
+                : '${_sideSubtitle(_l)}  ⇄  ${_sideSubtitle(_r)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -709,23 +837,12 @@ class _SftpPageState extends State<SftpPage> {
           ],
         ),
         actions: [
-          IconButton(
-            onPressed: (_phase == _Phase.live && !_busy) ? _uploadPicked : null,
-            tooltip: '上传文件（系统选取）',
-            icon: const Icon(Icons.upload_file_outlined, size: 21),
-          ),
-          IconButton(
-            onPressed:
-                (_phase == _Phase.live && !_busy) ? _mkdirRemote : null,
-            tooltip: '新建文件夹（远端）',
-            icon: const Icon(Icons.create_new_folder_outlined, size: 21),
-          ),
           ListenableBuilder(
-            listenable: _queue ?? _neverListenable,
+            listenable: _queue,
             builder: (context, _) {
-              final n = _queue?.activeCount ?? 0;
+              final n = _queue.activeCount;
               return IconButton(
-                onPressed: _phase == _Phase.live ? _openQueue : null,
+                onPressed: _openQueue,
                 tooltip: '传输队列',
                 icon: Badge(
                   isLabelVisible: n > 0,
@@ -741,109 +858,145 @@ class _SftpPageState extends State<SftpPage> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(3),
           child: ListenableBuilder(
-            listenable: _queue ?? _neverListenable,
+            listenable: _queue,
             builder: (context, _) {
-              final q = _queue;
               SftpTransferJob? job;
-              if (q != null) {
-                for (final j in q.jobs) {
-                  if (j.state == SftpJobState.running) {
-                    job = j;
-                    break;
-                  }
+              for (final j in _queue.jobs) {
+                if (j.state == SftpJobState.running) {
+                  job = j;
+                  break;
                 }
               }
               if (job == null) return const SizedBox(height: 3);
               final total = job.total;
-              return Column(children: [
-                LinearProgressIndicator(
-                  value: total > 0 ? job.transferred / total : null,
-                  minHeight: 3,
-                  color: Et.accent,
-                  backgroundColor: Et.cardBorder,
-                ),
-              ]);
+              return LinearProgressIndicator(
+                value: total > 0 ? job.transferred / total : null,
+                minHeight: 3,
+                color: Et.accent,
+                backgroundColor: Et.cardBorder,
+              );
             },
           ),
         ),
       ),
-      body: switch (_phase) {
-        _Phase.connecting => _note('连接中…', spinner: true),
-        _Phase.failed => Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+      body: compact
+          ? Column(children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(_reason ?? '连接失败',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 13, color: Et.textSecondary)),
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+                child: SegmentedButton<int>(
+                  segments: [
+                    ButtonSegment(
+                        value: 0,
+                        icon: Icon(
+                            _l.isLocal
+                                ? Icons.phone_android
+                                : Icons.dns_outlined,
+                            size: 17),
+                        label: Text(_l.label)),
+                    ButtonSegment(
+                        value: 1,
+                        icon: Icon(
+                            _r.isLocal
+                                ? Icons.phone_android
+                                : Icons.dns_outlined,
+                            size: 17),
+                        label: Text(_r.label)),
+                  ],
+                  selected: {_activeSide},
+                  onSelectionChanged: (s) =>
+                      setState(() => _activeSide = s.first),
+                ),
               ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: _connect,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('重试'),
-                style: FilledButton.styleFrom(
-                    backgroundColor: Et.primaryBtn,
-                    foregroundColor: Et.primaryBtnText),
-              ),
-            ],
+              Expanded(child: _sideBody(_activeSide == 0 ? _l : _r)),
+            ])
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _sideBody(_l)),
+                VerticalDivider(
+                    width: 1, thickness: 1, color: Et.cardBorder),
+                Expanded(child: _sideBody(_r)),
+              ],
+            ),
+    );
+  }
+
+  String _sideSubtitle(_Side s) => s.isLocal
+      ? (s.lpath ?? '本机未选择目录')
+      : '${s.spec.host!.username}@${s.spec.host!.hostname}:${s.rpath}';
+
+  Widget _sideBody(_Side s) {
+    if (!s.isLocal && s.phase == _SidePhase.connecting) {
+      return _note('连接 ${s.label} 中…', spinner: true);
+    }
+    if (!s.isLocal && s.phase == _SidePhase.failed) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(s.reason ?? '连接失败',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ),
-        _Phase.live => compact ? _liveCompact() : _liveWide(),
-      },
-    );
-  }
-
-  Widget _liveWide() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: _remotePanel()),
-        VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
-        Expanded(child: _localPanel()),
-      ],
-    );
-  }
-
-  Widget _liveCompact() {
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
-        child: SegmentedButton<bool>(
-          segments: const [
-            ButtonSegment(
-                value: false,
-                icon: Icon(Icons.dns_outlined, size: 17),
-                label: Text('远端')),
-            ButtonSegment(
-                value: true,
-                icon: Icon(Icons.phone_android, size: 17),
-                label: Text('本地')),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => _connect(s),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('重试'),
+            style: FilledButton.styleFrom(
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Et.primaryBtnText),
+          ),
+        ],
+      );
+    }
+    if (s.isLocal && s.phase == _SidePhase.localPending) {
+      // 桌面：等待选择目录（Android 由 _initLocal 直接就绪）
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('选择一个本机目录开始浏览',
+                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: () => _pickLocalRoot(s),
+              icon: const Icon(Icons.folder_open, size: 18),
+              label: const Text('选择目录'),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Et.primaryBtn,
+                  foregroundColor: Et.primaryBtnText),
+            ),
           ],
-          selected: {_localActive},
-          onSelectionChanged: (s) =>
-              setState(() => _localActive = s.first),
         ),
-      ),
-      Expanded(
-          child: _localActive
-              ? _localPanel()
-              : _remotePanel()),
+      );
+    }
+    return Column(children: [
+      _panelHeader(s),
+      Divider(height: 1, color: Et.cardBorder),
+      Expanded(child: s.isLocal ? _localList(s) : _remoteList(s)),
     ]);
   }
 
-  Widget _panelHeader(
-      {required String title,
-      required String path,
-      required List<Widget> actions}) {
+  Widget _panelHeader(_Side s) {
+    final picked = !s.isLocal || s.lpath != null;
+    final path = s.isLocal ? (picked ? s.lpath! : '未选择目录') : s.rpath;
     return Container(
       color: Et.card,
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
       child: Row(children: [
-        Text(title,
+        Icon(
+          s.isLocal ? Icons.phone_android : Icons.dns,
+          size: 15,
+          color: Et.textSecondary,
+        ),
+        const SizedBox(width: 6),
+        Text(s.label,
             style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w700, color: Et.textPrimary)),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
         const SizedBox(width: 10),
         Expanded(
           child: Text(path,
@@ -854,54 +1007,32 @@ class _SftpPageState extends State<SftpPage> {
                   fontFamily: 'Menlo',
                   color: Et.textSecondary)),
         ),
-        ...actions,
+        if (s.isLocal && !s.rootFixed)
+          IconButton(
+            onPressed: () => _pickLocalRoot(s),
+            tooltip: '选择本机目录',
+            icon:
+                Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
+          ),
+        IconButton(
+          onPressed: () => s.isLocal ? _lsLocal(s) : _list(s),
+          tooltip: '刷新',
+          icon: Icon(Icons.refresh, size: 19, color: Et.textSecondary),
+        ),
+        IconButton(
+          onPressed: _busy ? null : () => _mkdir(s),
+          tooltip: s.isLocal ? '新建文件夹（本机）' : '新建文件夹（远端）',
+          icon: Icon(Icons.create_new_folder_outlined,
+              size: 19, color: Et.textSecondary),
+        ),
       ]),
     );
   }
 
-  Widget _remotePanel() {
-    return Column(children: [
-      _panelHeader(title: '远端', path: _rpath, actions: [
-        IconButton(
-          onPressed: _list,
-          tooltip: '刷新',
-          icon: Icon(Icons.refresh, size: 19, color: Et.textSecondary),
-        ),
-      ]),
-      Divider(height: 1, color: Et.cardBorder),
-      Expanded(child: _remoteList()),
-    ]);
-  }
-
-  Widget _localPanel() {
-    final picked = _lpath != null;
-    return Column(children: [
-      _panelHeader(
-          title: '本地',
-          path: picked ? _lpath! : '未选择目录',
-          actions: [
-            if (!_lrootFixed)
-              IconButton(
-                onPressed: _pickLocalRoot,
-                tooltip: '选择本地目录',
-                icon: Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
-              ),
-            IconButton(
-              onPressed: _mkdirLocal,
-              tooltip: '新建文件夹（本地）',
-              icon: Icon(Icons.create_new_folder_outlined,
-                  size: 19, color: Et.textSecondary),
-            ),
-          ]),
-      Divider(height: 1, color: Et.cardBorder),
-      Expanded(child: _localList()),
-    ]);
-  }
-
-  Widget _remoteList() {
-    final entries = _rentries;
+  Widget _remoteList(_Side s) {
+    final entries = s.rentries;
     if (entries == null) return _note('读取目录中…', spinner: true);
-    final canUp = _rpath != '/' && _rpath.isNotEmpty;
+    final canUp = s.rpath != '/' && s.rpath.isNotEmpty;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
       itemCount: entries.length + (canUp ? 1 : 0),
@@ -909,14 +1040,18 @@ class _SftpPageState extends State<SftpPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading: Icon(Icons.arrow_upward,
-                size: 20, color: Et.textSecondary),
+            leading:
+                Icon(Icons.arrow_upward, size: 20, color: Et.textSecondary),
             title: const Text('..',
                 style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
-            onTap: _upRemote,
+            onTap: () => _upRemote(s),
           );
         }
         final e = entries[i - (canUp ? 1 : 0)];
+        final other = _otherOf(s);
+        final canTransfer = other.isLocal ||
+            (other.sessionId != null && other.sessionId != s.sessionId);
+        final otherLabel = other.isLocal ? '本机' : other.label;
         return _FileRow(
           name: e.name,
           isDir: e.isDir,
@@ -924,41 +1059,54 @@ class _SftpPageState extends State<SftpPage> {
             if (!e.isDir) _fmtSize(e.size.toInt()),
             _fmtTime(e.mtime),
           ].join(' · '),
-          onOpen: e.isDir ? () => _enterRemote(e) : null,
+          onOpen: e.isDir ? () => _enterRemote(s, e) : null,
           actions: [
-            if (!e.isDir) ...[
+            if (canTransfer)
               _RowAction(
-                  label: '下载到本地', icon: Icons.download_outlined,
-                  onTap: () => _downloadEntry(e)),
+                label: e.isDir
+                    ? (other.isLocal
+                        ? '打包下载到本机（.tar.gz）'
+                        : '复制到 $otherLabel（递归）')
+                    : (other.isLocal ? '下载到本机' : '直传到 $otherLabel'),
+                icon:
+                    e.isDir ? Icons.folder_zip_outlined : Icons.swap_horiz,
+                onTap: () => _transfer(s, re: e),
+              ),
+            if (!e.isDir)
               _RowAction(
-                  label: '编辑', icon: Icons.edit_outlined,
-                  onTap: () => _editRemote(e)),
-            ],
+                label: '编辑',
+                icon: Icons.edit_outlined,
+                onTap: () => _editRemote(s, e),
+              ),
             _RowAction(
-                label: '重命名', icon: Icons.drive_file_rename_outline,
-                onTap: () => _renameRemote(e)),
+              label: '重命名',
+              icon: Icons.drive_file_rename_outline,
+              onTap: () => _rename(s, re: e),
+            ),
             _RowAction(
-                label: '删除', icon: Icons.delete_outline,
-                destructive: true,
-                onTap: () => _deleteRemote(e)),
+              label: '删除',
+              icon: Icons.delete_outline,
+              destructive: true,
+              onTap: () => _delete(s, re: e),
+            ),
           ],
         );
       },
     );
   }
 
-  Widget _localList() {
-    final entries = _lentries;
-    if (_lpath == null) {
+  Widget _localList(_Side s) {
+    final entries = s.lentries;
+    if (s.lpath == null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('先选择一个本地目录',
+            Text('先选择一个本机目录',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
             const SizedBox(height: 10),
             FilledButton.icon(
-              onPressed: _pickLocalRoot,
+              onPressed: () => _pickLocalRoot(s),
               icon: const Icon(Icons.folder_open, size: 18),
               label: const Text('选择目录'),
               style: FilledButton.styleFrom(
@@ -970,7 +1118,9 @@ class _SftpPageState extends State<SftpPage> {
       );
     }
     if (entries == null) return _note('读取目录中…', spinner: true);
-    final canUp = _lroot != null && _lpath != _lroot; // 浏览根不提供上级
+    final canUp = s.lroot != null && s.lpath != s.lroot; // 浏览根不提供上级
+    final other = _otherOf(s);
+    final canUpload = !other.isLocal && other.sessionId != null;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
       itemCount: entries.length + (canUp ? 1 : 0),
@@ -978,11 +1128,11 @@ class _SftpPageState extends State<SftpPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading: Icon(Icons.arrow_upward,
-                size: 20, color: Et.textSecondary),
+            leading:
+                Icon(Icons.arrow_upward, size: 20, color: Et.textSecondary),
             title: const Text('..',
                 style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
-            onTap: _upLocal,
+            onTap: () => _upLocal(s),
           );
         }
         final e = entries[i - (canUp ? 1 : 0)];
@@ -993,16 +1143,25 @@ class _SftpPageState extends State<SftpPage> {
             if (!e.isDir) _fmtSize(e.size),
             _fmtTime(e.mtime),
           ].join(' · '),
-          onOpen: e.isDir ? () => _enterLocal(e) : null,
+          onOpen: e.isDir ? () => _enterLocal(s, e) : null,
           actions: [
-            if (!e.isDir)
+            if (!e.isDir && canUpload)
               _RowAction(
-                  label: '上传到远端', icon: Icons.upload_outlined,
-                  onTap: () => _uploadEntry(e)),
+                label: '上传到 ${other.label}',
+                icon: Icons.upload_outlined,
+                onTap: () => _transfer(s, le: e),
+              ),
             _RowAction(
-                label: '删除', icon: Icons.delete_outline,
-                destructive: true,
-                onTap: () => _deleteLocal(e)),
+              label: '重命名',
+              icon: Icons.drive_file_rename_outline,
+              onTap: () => _rename(s, le: e),
+            ),
+            _RowAction(
+              label: '删除',
+              icon: Icons.delete_outline,
+              destructive: true,
+              onTap: () => _delete(s, le: e),
+            ),
           ],
         );
       },
@@ -1020,8 +1179,7 @@ class _SftpPageState extends State<SftpPage> {
                   child: CircularProgressIndicator(strokeWidth: 2)),
             if (spinner) const SizedBox(height: 10),
             Text(text,
-                style:
-                    TextStyle(fontSize: 13, color: Et.textSecondary)),
+                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
           ],
         ),
       );
@@ -1062,7 +1220,7 @@ class _FileRow extends StatelessWidget {
       leading: Icon(
         isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined,
         size: 22,
-        color: isDir ? const Color(0xFF2C63D9) : Et.textSecondary,
+        color: isDir ? Et.tileGroup : Et.textSecondary,
       ),
       title: Text(name,
           maxLines: 1,
@@ -1109,7 +1267,8 @@ class _FileRow extends StatelessWidget {
 }
 
 class _QueueRow extends StatelessWidget {
-  const _QueueRow({required this.job, required this.onCancel, required this.onRetry});
+  const _QueueRow(
+      {required this.job, required this.onCancel, required this.onRetry});
 
   final SftpTransferJob job;
   final VoidCallback onCancel;
@@ -1119,10 +1278,25 @@ class _QueueRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color, icon) = switch (job.state) {
       (SftpJobState.queued) => ('排队中', Et.textSecondary, Icons.hourglass_empty),
-      (SftpJobState.running) => ('传输中', const Color(0xFF2C63D9), Icons.sync),
-      (SftpJobState.done) => ('完成', const Color(0xFF1A7F37), Icons.check_circle_outline),
+      (SftpJobState.running) => ('传输中', Et.tileGroup, Icons.sync),
+      (SftpJobState.done) => (
+          '完成',
+          Color(0xFF1A7F37),
+          Icons.check_circle_outline
+        ),
       (SftpJobState.failed) => ('失败', Et.danger, Icons.error_outline),
-      (SftpJobState.canceled) => ('已取消', Et.textSecondary, Icons.cancel_outlined),
+      (SftpJobState.canceled) => (
+          '已取消',
+          Et.textSecondary,
+          Icons.cancel_outlined
+        ),
+    };
+    final kindLabel = switch (job.kind) {
+      SftpJobKind.upload => '上传',
+      SftpJobKind.download => '下载',
+      SftpJobKind.copy => '直传',
+      SftpJobKind.tarDownload => '打包',
+      SftpJobKind.copyDir => '目录复制',
     };
     final total = job.total;
     return Padding(
@@ -1130,23 +1304,32 @@ class _QueueRow extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Icon(
-              job.direction == SftpDirection.upload
-                  ? Icons.upload_outlined
-                  : Icons.download_outlined,
-              size: 16,
-              color: Et.textSecondary),
+            switch (job.kind) {
+              SftpJobKind.upload => Icons.upload_outlined,
+              SftpJobKind.download => Icons.download_outlined,
+              SftpJobKind.copy => Icons.swap_horiz,
+              SftpJobKind.tarDownload => Icons.folder_zip_outlined,
+              SftpJobKind.copyDir => Icons.folder_copy_outlined,
+            },
+            size: 16,
+            color: Et.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Text(kindLabel,
+              style: TextStyle(fontSize: 11.5, color: Et.textSecondary)),
           const SizedBox(width: 6),
           Expanded(
             child: Text(job.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontFamily: 'Menlo', fontSize: 13, color: Et.textPrimary)),
+                    fontFamily: 'Menlo',
+                    fontSize: 13,
+                    color: Et.textPrimary)),
           ),
           Icon(icon, size: 15, color: color),
           const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(fontSize: 12, color: color)),
+          Text(label, style: TextStyle(fontSize: 12, color: color)),
           if (!job.isTerminal)
             IconButton(
               onPressed: onCancel,
@@ -1157,8 +1340,12 @@ class _QueueRow extends StatelessWidget {
               job.state == SftpJobState.canceled)
             IconButton(
               onPressed: onRetry,
-              tooltip: '重试（断点续传）',
-              icon: const Icon(Icons.refresh, size: 18, color: Color(0xFF2C63D9)),
+              tooltip: job.kind == SftpJobKind.tarDownload
+                  ? '重试（重新打包）'
+                  : job.kind == SftpJobKind.copyDir
+                      ? '重试（跳过已完成文件）'
+                      : '重试（断点续传）',
+              icon: Icon(Icons.refresh, size: 18, color: Et.tileGroup),
             ),
         ]),
         if (job.state == SftpJobState.running) ...[
@@ -1181,14 +1368,8 @@ class _QueueRow extends StatelessWidget {
           Text(job.error!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 11, color: Et.danger)),
+              style: TextStyle(fontSize: 11, color: Et.danger)),
       ]),
     );
   }
 }
-
-/// 占位 Listenable：队列为 null（未连接）时避免 ListenableBuilder 报错。
-class _NeverListenable extends ChangeNotifier {}
-
-final _neverListenable = _NeverListenable();

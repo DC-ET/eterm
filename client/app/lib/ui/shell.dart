@@ -20,6 +20,8 @@ import 'logs_page.dart';
 import 'known_hosts_page.dart';
 import 'port_forwarding_page.dart';
 import 'settings_page.dart';
+import 'sftp_entry_page.dart';
+import 'sftp_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
 import 'theme.dart';
@@ -72,6 +74,23 @@ class _ShellPageState extends State<ShellPage> {
       }
     });
     FgService.setKeepAlive(tabs.isNotEmpty); // 前台服务保活 SSH（M1）
+  }
+
+  /// 主机卡片菜单「SFTP 文件」：host ⇄ 本机 直达双侧页（凭据与终端同一解析链）。
+  void _openSftpFor(HostView h) {
+    final cred = widget.app.credentialFor(h);
+    if (cred == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该主机还没有凭据，请通过卡片菜单「编辑主机」补充')),
+      );
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SftpDualPage(
+        left: SftpSideSpec(host: h, authKind: cred.authKind, secret: cred.secret),
+        right: const SftpSideSpec(), // 本机
+      ),
+    ));
   }
 
   void closeTab(int i) {
@@ -141,17 +160,20 @@ class _ShellPageState extends State<ShellPage> {
           app: widget.app,
           onOpenTerminal: openTerminal,
           openHostIds: {for (final t in tabs) t.host.id},
-          onOpenSettings: () => setState(() => navIndex = 5),
+          onOpenSettings: () => setState(() => navIndex = 6),
+          onOpenSftp: _openSftpFor,
         ),
-      1 => KeychainPage(app: widget.app),
-      2 => PortForwardingPage(app: widget.app),
+      1 => SftpEntryPage(app: widget.app),
+      2 => KeychainPage(app: widget.app),
+      3 => PortForwardingPage(app: widget.app),
       // 勿加 const：Shell 随主题重建时 const 实例会被 Flutter 跳过（identical）
-      3 => KnownHostsPage(),
-      4 => LogsPage(),
-      _ => SettingsPage(
+      4 => KnownHostsPage(),
+      5 => LogsPage(),
+      6 => SettingsPage(
           app: widget.app,
           username: widget.username,
           onLogout: _logout),
+      _ => _MorePage(onNavigate: (i) => setState(() => navIndex = i)),
     };
     // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
     final vaultView = compact
@@ -262,16 +284,17 @@ class _ShellPageState extends State<ShellPage> {
 /// 评审 BUG-D1 回归：Known Hosts（侧栏 3）必须有手机入口，否则 compact 布局不可达。
 const _compactNav = [
   (Icons.dns_outlined, 'Hosts'),
+  (Icons.folder_copy_outlined, 'SFTP'),
   (Icons.key_outlined, 'Keys'),
-  (Icons.fingerprint, 'Known Hosts'),
-  (Icons.history, 'Logs'),
-  (Icons.settings_outlined, 'Settings'),
+  (Icons.apps, 'More'),
 ];
-const _compactNavTarget = [0, 1, 3, 4, 5];
+const _compactNavTarget = [0, 1, 2, -1]; // -1 = More 页（占位 navIndex）
 
 int _compactNavIndex(int navIndex) {
+  if (navIndex == -1) return 3; // More 页
   final i = _compactNavTarget.indexOf(navIndex);
-  return i < 0 ? 0 : i;
+  if (i >= 0) return i;
+  return 3; // 经 More 进入的实页（navIndex 3-6）：底栏高亮 More
 }
 
 // ---------- 手机终端标签条（吸底，Termius 式） ----------
@@ -556,6 +579,7 @@ class _Sidebar extends StatelessWidget {
 
   static const _items = [
     (Icons.dns_outlined, 'Hosts'),
+    (Icons.folder_copy_outlined, 'SFTP'),
     (Icons.key_outlined, 'Keychain'),
     (Icons.compare_arrows, 'Port Forwarding'),
     (Icons.fingerprint, 'Known Hosts'),
@@ -634,6 +658,90 @@ class _Sidebar extends StatelessWidget {
                     fontSize: 11.5, color: Et.textSecondary)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+// ---------- 手机「更多」页（Port Forwarding / Known Hosts / Logs / Settings 入口） ----------
+
+class _MorePage extends StatelessWidget {
+  const _MorePage({required this.onNavigate});
+
+  final void Function(int) onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    Theme.of(context); // 主题切换时随 inherited 重建
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        Text('More',
+            style: TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
+        const SizedBox(height: 12),
+        _row(context, Icons.compare_arrows, 'Port Forwarding', '本地 -L 端口转发规则',
+            () => onNavigate(3)),
+        _row(context, Icons.fingerprint, 'Known Hosts', 'TOFU 主机指纹记录',
+            () => onNavigate(4)),
+        _row(context, Icons.history, 'Logs', '连接与同步事件',
+            () => onNavigate(5)),
+        _row(context, Icons.settings_outlined, 'Settings', '账号 / 外观 / 终端字号',
+            () => onNavigate(6)),
+      ],
+    );
+  }
+
+  Widget _row(BuildContext context, IconData icon, String title, String sub,
+      VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Et.card,
+        borderRadius: BorderRadius.circular(22),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Et.sidebarSelected,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: Et.textPrimary, size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w600,
+                              color: Et.textPrimary)),
+                      const SizedBox(height: 3),
+                      Text(sub,
+                          style: TextStyle(
+                              fontSize: 13, color: Et.textSecondary)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right,
+                    size: 20, color: Et.textSecondary),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

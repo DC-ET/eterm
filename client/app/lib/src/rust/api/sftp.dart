@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `check_cancel`, `cleanup_cancel`, `download_inner`, `get`, `on_runtime`, `register_cancel`, `resume_offset`, `runtime`, `upload_inner`
+// These functions are ignored because they are not marked as `pub`: `check_cancel`, `cleanup_cancel`, `copy_dir_inner`, `copy_file_inner`, `dir_stats`, `download_inner`, `get`, `on_runtime`, `register_cancel`, `resume_offset`, `runtime`, `tar_download_inner`, `upload_inner`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `SftpConn`
 
 /// 取消传输（幂等：任务已结束/不存在也返回 Ok，调用方无需与任务结束竞态判断）。
@@ -90,6 +90,60 @@ Stream<SftpProgress> sftpUpload({
   localPath: localPath,
   remotePath: remotePath,
   resume: resume,
+);
+
+/// 远端→远端单文件直传（FFI）。
+Stream<SftpProgress> sftpCopy({
+  required BigInt idFrom,
+  required int jobId,
+  required String pathFrom,
+  required BigInt idTo,
+  required String pathTo,
+  required bool resume,
+}) => RustLib.instance.api.crateApiSftpSftpCopy(
+  idFrom: idFrom,
+  jobId: jobId,
+  pathFrom: pathFrom,
+  idTo: idTo,
+  pathTo: pathTo,
+  resume: resume,
+);
+
+/// 远端→远端目录递归复制（FFI）。
+Stream<SftpProgress> sftpCopyDir({
+  required BigInt idFrom,
+  required int jobId,
+  required String dirFrom,
+  required BigInt idTo,
+  required String dirTo,
+}) => RustLib.instance.api.crateApiSftpSftpCopyDir(
+  idFrom: idFrom,
+  jobId: jobId,
+  dirFrom: dirFrom,
+  idTo: idTo,
+  dirTo: dirTo,
+);
+
+/// 远端目录打包压缩下载（FFI，任务清单 #7）：产出 `<目录名>.tar.gz`。
+/// 独立连接执行（不影响浏览会话）；取消/失败不保留暂存（流式压缩无法续传）。
+Stream<SftpProgress> sftpTarDownload({
+  required String host,
+  required int port,
+  required String user,
+  required String authKind,
+  required String secret,
+  required int jobId,
+  required String remoteDir,
+  required String localPath,
+}) => RustLib.instance.api.crateApiSftpSftpTarDownload(
+  host: host,
+  port: port,
+  user: user,
+  authKind: authKind,
+  secret: secret,
+  jobId: jobId,
+  remoteDir: remoteDir,
+  localPath: localPath,
 );
 
 /// 目录项（浏览列表行）。

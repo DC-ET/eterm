@@ -72,19 +72,25 @@ void main() {
           .toList();
       debugPrint('BUG-D1 回归: 手机底栏入口 = $labels');
 
-      // 底栏必须含 Known Hosts 入口（F4.4，PRD P0）
-      expect(find.text('Known Hosts'), findsOneWidget,
-          reason: '手机底栏必须包含 Known Hosts 入口，否则 compact 布局不可达');
+      // 底栏经「More」收纳 Known Hosts（任务清单 #6：底栏让位给 SFTP 一级入口）
+      expect(find.text('More'), findsOneWidget, reason: 'compact 底栏应有 More 入口');
 
-      // 点入后路由切到侧栏 navIndex 3（KnownHostsPage）。
+      // 点入 More → Known Hosts（navIndex 4）。
       // 页面实体渲染依赖本地库 FFI，测试环境（无 Rust）下 KnownHostsPage.initState 的
       // 错误路径会在 mount 中 setState（见评审"附加观察"1），故此处断言路由接线。
+      await tester.tap(find.text('More'));
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        while (tester.takeException() != null) {}
+      }
+      expect(find.text('Known Hosts'), findsOneWidget,
+          reason: 'More 页必须包含 Known Hosts 入口，否则 compact 布局不可达');
       await tester.tap(find.text('Known Hosts'));
       for (var i = 0; i < 3; i++) {
         await tester.pump(const Duration(milliseconds: 100));
         while (tester.takeException() != null) {}
       }
-      expect(shell.navIndex, 3, reason: '点入 Known Hosts 底栏项应切到 Known Hosts 页');
+      expect(shell.navIndex, 4, reason: 'More → Known Hosts 应切到 Known Hosts 页');
     },
   );
 

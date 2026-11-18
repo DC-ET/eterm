@@ -1,7 +1,13 @@
-// SFTP 传输队列（M3）：入队 → 并发受限执行 → 进度/取消/重试（断点续传）。
-// 队列本身无会话生命周期：持有 sessionId，页面 dispose 时 shutdown() 全量取消。
-// Rust 侧语义（api/sftp.rs）：覆盖写 + `<目标>.eterm-part` 暂存；resume=true 从暂存续传，
-// 取消/失败保留暂存 → 重试自动续。冲突策略（skip/overwrite/rename）在入队前由 UI 决策。
+// SFTP 传输队列（M3→v2）：入队 → 并发受限执行 → 进度/取消/重试。
+// v2（任务清单 #7/#8）：任务自带会话/路径（支持 远端↔远端 直传、目录递归复制、
+// 目录打包压缩下载），队列不再绑定单一会话。任务类型：
+//   upload      本地文件 → 远端
+//   download    远端文件 → 本地
+//   copy        远端文件 → 远端（客户端内存中转，B 侧 .eterm-part 暂存）
+//   tarDownload 远端目录 → 本地 <名>.tar.gz（exec tar -czf -，流式，不可续传）
+//   copyDir     远端目录 → 远端（递归逐文件，目标同大小跳过 → 重试可续）
+// Rust 侧语义：覆盖写 + `<目标>.eterm-part` 暂存；resume=true 从暂存续传（tar/copyDir 除外）。
+// 冲突策略（skip/overwrite/rename）在入队前由 UI 决策。
 
 import 'dart:async';
 
@@ -10,10 +16,26 @@ import 'package:eterm/src/rust/api/sftp.dart' as sftp;
 
 enum SftpJobState { queued, running, done, failed, canceled }
 
-enum SftpDirection { upload, download }
+enum SftpJobKind { upload, download, copy, tarDownload, copyDir }
 
 /// 冲突策略：入队时目标侧已存在同名文件时的处置。
 enum ConflictAction { skip, overwrite, rename }
+
+/// 远端主机规格（tar 打包需独立连接，任务随身携带）。
+class SftpRemoteSpec {
+  const SftpRemoteSpec({
+    required this.host,
+    required this.port,
+    required this.user,
+    required this.authKind,
+    required this.secret,
+  });
+  final String host;
+  final int port;
+  final String user;
+  final String authKind;
+  final String secret;
+}
 
 /// 跨页面共享的传输任务 id 序列（Rust 取消注册表按 u32 键，各页新任务取新 id）。
 int _jobSeq = DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
@@ -22,26 +44,37 @@ int freshSftpJobId() => _jobSeq = (_jobSeq + 1) & 0x3FFFFFFF;
 class SftpTransferJob {
   SftpTransferJob({
     required this.jobId,
-    required this.direction,
-    required this.localPath,
-    required this.remotePath,
+    required this.kind,
+    required this.pathFrom,
+    required this.pathTo,
     required this.name,
+    this.sessionFrom,
+    this.sessionTo,
+    this.specFrom,
     this.resume = false,
   });
 
   /// Rust 取消注册表的键。重试时换新 id，避免与已清理的旧注册混淆。
   int jobId;
-  final SftpDirection direction;
-  final String localPath;
-  final String remotePath;
+  final SftpJobKind kind;
+  final String pathFrom;
+  final String pathTo;
   /// 展示名（两端同名冲突改写后以实际入队名为准）。
   final String name;
+  /// 源会话（null = 本地）。tarDownload 用 specFrom 独立建连。
+  final BigInt? sessionFrom;
+  /// 目标会话（null = 本地）。
+  final BigInt? sessionTo;
+  final SftpRemoteSpec? specFrom;
   /// 重试（或用户显式续传）时置 true：Rust 从 .eterm-part 暂存续传。
   bool resume;
   SftpJobState state = SftpJobState.queued;
   int transferred = 0;
   int total = 0; // 0 = 未知（首个进度事件补齐）
   String? error;
+
+  /// 目标侧路径（去重键：上传=远端路径/下载=本地路径/复制=目标路径）。
+  String get targetPath => pathTo;
 
   bool get isTerminal =>
       state == SftpJobState.done ||
@@ -53,22 +86,7 @@ class SftpTransferJob {
 
 /// 传输通道抽象：生产走 frb 绑定，测试注入 fake（驱动进度/错误时序）。
 abstract class SftpTransport {
-  Stream<sftp.SftpProgress> upload({
-    required BigInt id,
-    required int jobId,
-    required String localPath,
-    required String remotePath,
-    required bool resume,
-  });
-
-  Stream<sftp.SftpProgress> download({
-    required BigInt id,
-    required int jobId,
-    required String remotePath,
-    required String localPath,
-    required bool resume,
-  });
-
+  Stream<sftp.SftpProgress> start(SftpTransferJob job);
   void cancel({required int jobId});
 }
 
@@ -76,36 +94,47 @@ class FrbSftpTransport implements SftpTransport {
   const FrbSftpTransport();
 
   @override
-  Stream<sftp.SftpProgress> upload({
-    required BigInt id,
-    required int jobId,
-    required String localPath,
-    required String remotePath,
-    required bool resume,
-  }) =>
-      sftp.sftpUpload(
-        id: id,
-        jobId: jobId,
-        localPath: localPath,
-        remotePath: remotePath,
-        resume: resume,
-      );
-
-  @override
-  Stream<sftp.SftpProgress> download({
-    required BigInt id,
-    required int jobId,
-    required String remotePath,
-    required String localPath,
-    required bool resume,
-  }) =>
-      sftp.sftpDownload(
-        id: id,
-        jobId: jobId,
-        remotePath: remotePath,
-        localPath: localPath,
-        resume: resume,
-      );
+  Stream<sftp.SftpProgress> start(SftpTransferJob j) => switch (j.kind) {
+        SftpJobKind.upload => sftp.sftpUpload(
+            id: j.sessionTo!,
+            jobId: j.jobId,
+            localPath: j.pathFrom,
+            remotePath: j.pathTo,
+            resume: j.resume,
+          ),
+        SftpJobKind.download => sftp.sftpDownload(
+            id: j.sessionFrom!,
+            jobId: j.jobId,
+            remotePath: j.pathFrom,
+            localPath: j.pathTo,
+            resume: j.resume,
+          ),
+        SftpJobKind.copy => sftp.sftpCopy(
+            idFrom: j.sessionFrom!,
+            jobId: j.jobId,
+            pathFrom: j.pathFrom,
+            idTo: j.sessionTo!,
+            pathTo: j.pathTo,
+            resume: j.resume,
+          ),
+        SftpJobKind.tarDownload => sftp.sftpTarDownload(
+            host: j.specFrom!.host,
+            port: j.specFrom!.port,
+            user: j.specFrom!.user,
+            authKind: j.specFrom!.authKind,
+            secret: j.specFrom!.secret,
+            jobId: j.jobId,
+            remoteDir: j.pathFrom,
+            localPath: j.pathTo,
+          ),
+        SftpJobKind.copyDir => sftp.sftpCopyDir(
+            idFrom: j.sessionFrom!,
+            jobId: j.jobId,
+            dirFrom: j.pathFrom,
+            idTo: j.sessionTo!,
+            dirTo: j.pathTo,
+          ),
+      };
 
   @override
   void cancel({required int jobId}) => sftp.sftpTransferCancel(jobId: jobId);
@@ -113,12 +142,10 @@ class FrbSftpTransport implements SftpTransport {
 
 class SftpTransferQueue extends ChangeNotifier {
   SftpTransferQueue({
-    required this.sessionId,
     this.concurrency = 2,
     SftpTransport? transport,
   }) : _transport = transport ?? const FrbSftpTransport();
 
-  final BigInt sessionId;
   final int concurrency;
   final SftpTransport _transport;
 
@@ -131,32 +158,38 @@ class SftpTransferQueue extends ChangeNotifier {
   }
 
   /// 新建任务（默认全新传输：Rust 侧清掉同名暂存从头写）。
-  /// 断点续传只经 retry()（resume=true 从 .eterm-part 暂存续）——
+  /// 断点续传只经 retry()（resume=true 从 .eterm-part 续）——
   /// 全新入队走 resume=false，避免同名旧暂存来源不明时续错数据。
-  /// 同方向、同目标路径（上传=远端路径/下载=本地路径）的去重：已有非终态任务时
-  /// 返回 null 并拒绝入队（两个任务并发写同一 .eterm-part 会损坏数据）。
-  /// 队列已 dispose 时同样返回 null。
+  /// 同 kind、同目标路径（targetPath）的去重：已有非终态任务时返回 null 并拒绝入队
+  /// （两个任务并发写同一 .eterm-part 会损坏数据）。队列已 dispose 时同样返回 null。
   SftpTransferJob? enqueue({
-    required SftpDirection direction,
-    required String localPath,
-    required String remotePath,
+    required SftpJobKind kind,
+    required String pathFrom,
+    required String pathTo,
     required String name,
+    BigInt? sessionFrom,
+    BigInt? sessionTo,
+    SftpRemoteSpec? specFrom,
     bool resume = false,
   }) {
     if (_disposed) return null;
-    final target = direction == SftpDirection.upload ? remotePath : localPath;
+    // 去重键 = (目标会话, 目标路径)：同一写入端同一目标会并发写同一 .eterm-part
+    // （与 kind 无关：upload 与 copy 目标相同时同样冲突）；不同会话互不相干。
+    final targetKey = sessionTo?.toString() ?? 'local';
     for (final j in jobs) {
       if (j.isTerminal) continue;
-      final jTarget =
-          j.direction == SftpDirection.upload ? j.remotePath : j.localPath;
-      if (j.direction == direction && jTarget == target) return null;
+      final jKey = j.sessionTo?.toString() ?? 'local';
+      if (jKey == targetKey && j.targetPath == pathTo) return null;
     }
     final job = SftpTransferJob(
       jobId: freshSftpJobId(),
-      direction: direction,
-      localPath: localPath,
-      remotePath: remotePath,
+      kind: kind,
+      pathFrom: pathFrom,
+      pathTo: pathTo,
       name: name,
+      sessionFrom: sessionFrom,
+      sessionTo: sessionTo,
+      specFrom: specFrom,
       resume: resume,
     );
     jobs.add(job);
@@ -178,24 +211,26 @@ class SftpTransferQueue extends ChangeNotifier {
 
   /// 失败/取消重试：换新 jobId，从暂存续传（resume=true）。
   /// 仅 failed/canceled 可重试（对 done/queued/running 重试为 no-op）。
-  /// 重试同样遵守同目标去重：失败任务长期保留在列表（clearFinished 刻意保留失败），
-  /// 若用户已为同一目标重新入队，重试会造成并发写同一 .eterm-part → 静默拒绝。
+  /// tar 下载与目录复制为流式/逐文件语义：重试为全新执行（Rust 侧各自处理续传）。
+  /// 重试同样遵守同目标去重（与 enqueue 同口径：(目标会话, 目标路径)，跨 kind）：
+  /// 失败任务长期保留在列表（clearFinished 刻意保留失败），若用户已为同一目标
+  /// 重新入队（哪怕换了传输类型），重试会造成并发写同一 .eterm-part → 静默拒绝。
   void retry(SftpTransferJob job) {
     if (_disposed) return;
     if (job.state != SftpJobState.failed &&
         job.state != SftpJobState.canceled) {
       return;
     }
-    final target =
-        job.direction == SftpDirection.upload ? job.remotePath : job.localPath;
+    final jobKey = job.sessionTo?.toString() ?? 'local';
     for (final j in jobs) {
       if (identical(j, job) || j.isTerminal) continue;
-      final jTarget =
-          j.direction == SftpDirection.upload ? j.remotePath : j.localPath;
-      if (j.direction == job.direction && jTarget == target) return;
+      final jKey = j.sessionTo?.toString() ?? 'local';
+      if (jKey == jobKey && j.targetPath == job.targetPath) return;
     }
     job.jobId = freshSftpJobId();
-    job.resume = true;
+    job.resume = job.kind == SftpJobKind.upload ||
+        job.kind == SftpJobKind.download ||
+        job.kind == SftpJobKind.copy;
     job.state = SftpJobState.queued;
     job.error = null;
     _notify();
@@ -244,21 +279,7 @@ class SftpTransferQueue extends ChangeNotifier {
   void _start(SftpTransferJob job) {
     job.state = SftpJobState.running;
     _notify();
-    final stream = job.direction == SftpDirection.upload
-        ? _transport.upload(
-            id: sessionId,
-            jobId: job.jobId,
-            localPath: job.localPath,
-            remotePath: job.remotePath,
-            resume: job.resume,
-          )
-        : _transport.download(
-            id: sessionId,
-            jobId: job.jobId,
-            remotePath: job.remotePath,
-            localPath: job.localPath,
-            resume: job.resume,
-          );
+    final stream = _transport.start(job);
     // 捕获本订阅句柄：onDone 校验归属，防重试后旧流迟到 onDone 误标新尝试
     late final StreamSubscription<sftp.SftpProgress> sub;
     sub = stream.listen((p) {

@@ -556,6 +556,420 @@ pub async fn sftp_upload(
     res
 }
 
+// ---------- 远端↔远端直传（任务清单 #8）与目录打包压缩下载（任务清单 #7） ----------
+
+/// 远端→远端单文件直传核心：数据分块经客户端内存中转，B 侧 `<目标>.eterm-part`
+/// 暂存 + 完成改名（覆盖语义）。resume=true 按 B 侧暂存长度续传。
+/// report 为文件内绝对进度（offset..file_total），供聚合方换算。
+pub(crate) async fn copy_file_inner(
+    id_from: u64,
+    path_from: String,
+    id_to: u64,
+    path_to: String,
+    resume: bool,
+    cancelled: Arc<AtomicBool>,
+    report: &mut (dyn FnMut(u64, u64) + Send),
+) -> Result<(), String> {
+    check_cancel(&cancelled)?;
+    let a = get(id_from)?;
+    let b = get(id_to)?;
+    let total = a
+        .sftp
+        .metadata(&path_from)
+        .await
+        .map_err(|e| format!("读取源文件信息失败: {e}"))?
+        .len();
+    let part_path = format!("{path_to}{PART_SUFFIX}");
+    let mut offset: u64 = 0;
+    if resume {
+        if let Ok(md) = b.sftp.metadata(&part_path).await {
+            offset = resume_offset(md.len(), total);
+        }
+    } else {
+        let _ = b.sftp.remove_file(&part_path).await; // 幂等清理上次残留
+    }
+    let mut flags = OpenFlags::CREATE | OpenFlags::WRITE;
+    if offset == 0 {
+        flags |= OpenFlags::TRUNCATE;
+    }
+    let mut src = a
+        .sftp
+        .open(&path_from)
+        .await
+        .map_err(|e| format!("打开源文件失败: {e}"))?;
+    let mut dst = b
+        .sftp
+        .open_with_flags(&part_path, flags)
+        .await
+        .map_err(|e| format!("创建目标文件失败: {e}"))?;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+    if offset > 0 {
+        src.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| format!("定位源偏移失败: {e}"))?;
+        dst.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| format!("定位目标偏移失败: {e}"))?;
+    }
+    report(offset, total);
+    let mut transferred: u64 = offset;
+    let mut last_reported: u64 = offset;
+    loop {
+        check_cancel(&cancelled)?;
+        let mut buf = vec![0u8; CHUNK];
+        let n = src
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("读取源失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        dst.write_all(&buf[..n])
+            .await
+            .map_err(|e| format!("写入目标失败: {e}"))?;
+        transferred += n as u64;
+        if transferred - last_reported >= PROGRESS_STEP {
+            last_reported = transferred;
+            report(transferred, total);
+        }
+    }
+    dst.flush().await.map_err(|e| format!("刷新目标失败: {e}"))?;
+    // 收尾改名（与 upload 同语义：先删旧目标再 rename）
+    if b.sftp.metadata(&path_to).await.is_ok() {
+        b.sftp
+            .remove_file(&path_to)
+            .await
+            .map_err(|e| format!("清理旧目标失败: {e}"))?;
+    }
+    b.sftp
+        .rename(&part_path, &path_to)
+        .await
+        .map_err(|e| format!("落盘改名失败: {e}"))?;
+    report(total, total);
+    Ok(())
+}
+
+/// 远端→远端单文件直传（FFI）。
+#[flutter_rust_bridge::frb]
+pub async fn sftp_copy(
+    id_from: u64,
+    job_id: u32,
+    path_from: String,
+    id_to: u64,
+    path_to: String,
+    resume: bool,
+    sink: crate::frb_generated::StreamSink<SftpProgress>,
+) -> Result<(), String> {
+    let cancelled = register_cancel(job_id);
+    let res = on_runtime(move || {
+        Box::pin(async move {
+            let path_disp = path_from.clone();
+            let mut report = move |t: u64, total: u64| {
+                let _ = sink.add(SftpProgress {
+                    job_id,
+                    transferred: t,
+                    total,
+                    path: path_disp.clone(),
+                });
+            };
+            copy_file_inner(
+                id_from,
+                path_from,
+                id_to,
+                path_to,
+                resume,
+                cancelled,
+                &mut report,
+            )
+            .await
+        })
+    })
+    .await;
+    cleanup_cancel(job_id);
+    res
+}
+
+/// 目录内容预走查（lstat 语义，杜绝链接环）。收集常规文件 (路径, 大小) 与子目录；
+/// 符号链接与非常规条目（socket/FIFO/悬空链接）跳过——复制走 STAT 口径，
+/// 对它们 open/metadata 会失败或挂起，整目录任务不应被坏条目拖垮。
+async fn dir_stats(
+    conn: &SftpSession,
+    dir: &str,
+    files: &mut Vec<(String, u64)>,
+    dirs: &mut Vec<String>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    check_cancel(cancelled)?;
+    let items = conn
+        .read_dir(dir)
+        .await
+        .map_err(|e| format!("读取目录失败: {e}"))?;
+    for it in items {
+        let md = it.metadata();
+        let name = it.file_name();
+        let child = if dir.ends_with('/') {
+            format!("{dir}{name}")
+        } else {
+            format!("{dir}/{name}")
+        };
+        let ft = md.file_type();
+        if ft.is_dir() {
+            dirs.push(child.clone());
+            Box::pin(dir_stats(conn, &child, files, dirs, cancelled)).await?;
+        } else if ft.is_file() {
+            files.push((child, md.len()));
+        }
+    }
+    Ok(())
+}
+
+/// 远端→远端目录递归复制核心（任务清单 #8）：逐文件 copy_file_inner；
+/// 目标已存在且同大小的文件跳过 → 整体重试天然具备断点续传语义。
+/// report 为目录级聚合进度（transferred..total）。
+pub(crate) async fn copy_dir_inner(
+    id_from: u64,
+    dir_from: String,
+    id_to: u64,
+    dir_to: String,
+    cancelled: Arc<AtomicBool>,
+    report: &mut (dyn FnMut(u64, u64) + Send),
+) -> Result<(), String> {
+    check_cancel(&cancelled)?;
+    let a = get(id_from)?;
+    let b = get(id_to)?;
+    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut dirs: Vec<String> = Vec::new();
+    dir_stats(&a.sftp, &dir_from, &mut files, &mut dirs, &cancelled).await?;
+    let total: u64 = files.iter().map(|(_, s)| *s).sum();
+    report(0, total);
+    let _ = b.sftp.create_dir(&dir_to).await; // 根目标已存在属正常
+    // 重建全部子目录（含空目录）：排序保证父目录先于子目录创建
+    let mut sorted_dirs = dirs;
+    sorted_dirs.sort();
+    for d in sorted_dirs {
+        check_cancel(&cancelled)?;
+        let rel = d
+            .strip_prefix(&dir_from)
+            .unwrap_or(&d)
+            .trim_start_matches('/')
+            .to_string();
+        let dst_dir = if dir_to.ends_with('/') {
+            format!("{dir_to}{rel}")
+        } else {
+            format!("{dir_to}/{rel}")
+        };
+        let _ = b.sftp.create_dir(&dst_dir).await; // 已存在忽略
+    }
+    let mut transferred: u64 = 0;
+    for (src, size) in files {
+        check_cancel(&cancelled)?;
+        let rel = src
+            .strip_prefix(&dir_from)
+            .unwrap_or(&src)
+            .trim_start_matches('/')
+            .to_string();
+        let dst = if dir_to.ends_with('/') {
+            format!("{dir_to}{rel}")
+        } else {
+            format!("{dir_to}/{rel}")
+        };
+        // 父目录逐级创建（已存在忽略）
+        let mut acc = String::new();
+        if let Some((parent, _)) = dst.rsplit_once('/') {
+            for seg in parent.trim_start_matches('/').split('/') {
+                if seg.is_empty() {
+                    continue;
+                }
+                acc.push('/');
+                acc.push_str(seg);
+                let _ = b.sftp.create_dir(&acc).await;
+            }
+        }
+        // 已存在且是文件、同大小 → 跳过（重试续传）；目录同名不顶替
+        if let Ok(md) = b.sftp.metadata(&dst).await {
+            if !md.file_type().is_dir() && md.len() == size {
+                transferred += size;
+                report(transferred, total);
+                continue;
+            }
+        }
+        let base = transferred;
+        copy_file_inner(id_from, src, id_to, dst, false, cancelled.clone(), &mut |t, _ft| {
+            report(base + t, total)
+        })
+        .await?;
+        transferred += size;
+        report(transferred, total);
+    }
+    Ok(())
+}
+
+/// 远端→远端目录递归复制（FFI）。
+#[flutter_rust_bridge::frb]
+pub async fn sftp_copy_dir(
+    id_from: u64,
+    job_id: u32,
+    dir_from: String,
+    id_to: u64,
+    dir_to: String,
+    sink: crate::frb_generated::StreamSink<SftpProgress>,
+) -> Result<(), String> {
+    let cancelled = register_cancel(job_id);
+    let res = on_runtime(move || {
+        Box::pin(async move {
+            let dir_disp = dir_from.clone();
+            let mut report = move |t: u64, total: u64| {
+                let _ = sink.add(SftpProgress {
+                    job_id,
+                    transferred: t,
+                    total,
+                    path: dir_disp.clone(),
+                });
+            };
+            copy_dir_inner(id_from, dir_from, id_to, dir_to, cancelled, &mut report).await
+        })
+    })
+    .await;
+    cleanup_cancel(job_id);
+    res
+}
+
+/// 远端目录打包压缩下载核心（任务清单 #7）：独立 SSH 连接 exec
+/// `tar -czf -`，流式写 `<本地>.eterm-part` → 完成改名。total 未知（0）；
+/// 流式压缩不可续传，取消/失败删除暂存。report(transferred, 0)。
+async fn tar_download_inner(
+    conn: &dyn crate::util::AuthedConn,
+    remote_dir: String,
+    local_path: String,
+    cancelled: Arc<AtomicBool>,
+    report: &mut (dyn FnMut(u64, u64) + Send),
+) -> Result<(), String> {
+    check_cancel(&cancelled)?;
+    // shell 单引号转义（POSIX '\''）
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let dir = remote_dir.trim_end_matches('/').to_string();
+    if dir.is_empty() {
+        // 根目录打包会扫 /proc、/sys 等虚拟文件系统（大概率卡死/非零退出），直接拒绝
+        return Err("不支持打包根目录 /，请选择具体目录".to_string());
+    }
+    let (parent, base) = dir
+        .rsplit_once('/')
+        .map(|(p, b)| (p.to_string(), b.to_string()))
+        .unwrap_or(("/".into(), dir.clone()));
+    let base = if base.is_empty() { "/".into() } else { base };
+    let cmd = format!("tar -czf - -C {} {}", q(&parent), q(&base));
+    let mut ch = conn
+        .open_session()
+        .await
+        .map_err(|e| format!("打开会话通道失败: {e}"))?;
+    ch.exec(true, cmd.as_str())
+        .await
+        .map_err(|e| format!("远端打包失败（tar 不可用？）: {e}"))?;
+    let part_path = format!("{local_path}{PART_SUFFIX}");
+    let mut file = tokio::fs::File::create(&part_path)
+        .await
+        .map_err(|e| format!("创建本地文件失败: {e}"))?;
+    use tokio::io::AsyncWriteExt;
+    let mut transferred: u64 = 0;
+    let mut last_reported: u64 = 0;
+    let mut exit_code: Option<u32> = None;
+    loop {
+        check_cancel(&cancelled)?;
+        match ch.wait().await {
+            Some(russh::ChannelMsg::Data { data }) => {
+                file.write_all(&data)
+                    .await
+                    .map_err(|e| format!("写入本地失败: {e}"))?;
+                transferred += data.len() as u64;
+                if transferred - last_reported >= PROGRESS_STEP {
+                    last_reported = transferred;
+                    report(transferred, 0);
+                }
+            }
+            Some(russh::ChannelMsg::Eof) => {}
+            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                exit_code = Some(exit_status);
+            }
+            Some(russh::ChannelMsg::Close) | None => break,
+            Some(_) => {}
+        }
+    }
+    file.flush().await.map_err(|e| format!("落盘失败: {e}"))?;
+    drop(file);
+    // 退出码非 0（tar 报错）或未收到（连接中断）→ 产物截断/不可信，一律失败。
+    // 部分数据的包绝不 rename 成品，否则会覆盖本地同名好包、绕开 .eterm-part 语义。
+    match exit_code {
+        Some(0) => {}
+        Some(code) => {
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(format!("远端 tar 退出码 {code}，产物不完整"));
+        }
+        None => {
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err("远端 tar 会话异常中断，产物不完整".to_string());
+        }
+    }
+    tokio::fs::rename(&part_path, &local_path)
+        .await
+        .map_err(|e| format!("落盘改名失败: {e}"))?;
+    report(transferred, transferred);
+    Ok(())
+}
+
+/// 远端目录打包压缩下载（FFI，任务清单 #7）：产出 `<目录名>.tar.gz`。
+/// 独立连接执行（不影响浏览会话）；取消/失败不保留暂存（流式压缩无法续传）。
+#[flutter_rust_bridge::frb]
+pub async fn sftp_tar_download(
+    host: String,
+    port: u16,
+    user: String,
+    auth_kind: String,
+    secret: String,
+    job_id: u32,
+    remote_dir: String,
+    local_path: String,
+    sink: crate::frb_generated::StreamSink<SftpProgress>,
+) -> Result<(), String> {
+    let cancelled = register_cancel(job_id);
+    let res = on_runtime(move || {
+        Box::pin(async move {
+            let conn =
+                match crate::api::ssh::connect_and_auth(&host, port, &user, &auth_kind, &secret)
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(reason) => return Err(reason),
+                };
+            let part_path = format!("{local_path}{PART_SUFFIX}");
+            let dir_disp = remote_dir.clone();
+            let mut report = move |t: u64, total: u64| {
+                let _ = sink.add(SftpProgress {
+                    job_id,
+                    transferred: t,
+                    total,
+                    path: dir_disp.clone(),
+                });
+            };
+            let result = tar_download_inner(
+                conn.as_ref(),
+                remote_dir,
+                local_path,
+                cancelled.clone(),
+                &mut report,
+            )
+            .await;
+            if result.is_err() {
+                let _ = tokio::fs::remove_file(&part_path).await; // 流式压缩：失败不保留暂存
+            }
+            conn.shutdown().await;
+            result
+        })
+    })
+    .await;
+    cleanup_cancel(job_id);
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,6 +1103,198 @@ mod tests {
             let _ = std::fs::remove_file(&local_src);
             let _ = std::fs::remove_file(&local_dst);
         });
+    }
+
+    /// k7 真机：远端↔远端直传 + 目录递归复制 + 目录打包压缩下载（环境同 roundtrip；默认跳过）。
+    /// 同一会话自拷（id_from == id_to）覆盖"任选两台服务器"中同主机的退化情形。
+    #[test]
+    fn sftp_k7_copy_and_tar() {
+        let Ok(host) = std::env::var("ETERM_SFTP_HOST") else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        crate::store::open(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        crate::store::set_lkmk_for_test(vec![7u8; 32]);
+        let key_path = std::env::var("ETERM_SFTP_KEY").expect("ETERM_SFTP_KEY 未设置");
+        let secret = std::fs::read_to_string(&key_path).expect("读取私钥失败");
+        let user = std::env::var("ETERM_SFTP_USER").unwrap_or_else(|_| "root".into());
+
+        crate::util::ssh_runtime().block_on(async {
+            let id_a = sftp_connect(host.clone(), 22, user.clone(), "key".into(), secret.clone())
+                .await
+                .expect("连接 A 失败");
+            let id_b = sftp_connect(host.clone(), 22, user, "key".into(), secret.clone())
+                .await
+                .expect("连接 B 失败");
+
+            let src_dir = "/tmp/eterm-sftp-copy-src".to_string();
+            let dst_dir = "/tmp/eterm-sftp-copy-dst".to_string();
+            // 幂等清理
+            let _ = exec_rm_rf(&host, &src_dir).await;
+            let _ = exec_rm_rf(&host, &dst_dir).await;
+            sftp_mkdir(id_a, src_dir.clone()).await.expect("mkdir src 失败");
+            sftp_mkdir(id_a, format!("{src_dir}/sub")).await.expect("mkdir sub 失败");
+            sftp_mkdir(id_a, dst_dir.clone()).await.expect("mkdir dst 失败");
+
+            // 两级目录：/f1.bin + /sub/f2.bin
+            let p1: Vec<u8> = (0..512 * 1024u32).map(|i| (i % 253) as u8).collect();
+            let p2: Vec<u8> = (0..256 * 1024u32).map(|i| (i % 241) as u8).collect();
+            let local1 = std::env::temp_dir().join("eterm-sftp-c1.bin");
+            let local2 = std::env::temp_dir().join("eterm-sftp-c2.bin");
+            std::fs::write(&local1, &p1).unwrap();
+            std::fs::write(&local2, &p2).unwrap();
+            upload_inner(
+                id_a,
+                local1.to_string_lossy().into_owned(),
+                format!("{src_dir}/f1.bin"),
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_, _| {},
+            )
+            .await
+            .expect("上传 f1 失败");
+            upload_inner(
+                id_a,
+                local2.to_string_lossy().into_owned(),
+                format!("{src_dir}/sub/f2.bin"),
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_, _| {},
+            )
+            .await
+            .expect("上传 f2 失败");
+
+            // 1) 单文件直传 A→B（同主机双会话）
+            copy_file_inner(
+                id_a,
+                format!("{src_dir}/f1.bin"),
+                id_b,
+                format!("{dst_dir}/f1.bin"),
+                false,
+                Arc::new(AtomicBool::new(false)),
+                &mut |_, _| {},
+            )
+            .await
+            .expect("直传失败");
+            let st = sftp_stat(id_b, format!("{dst_dir}/f1.bin"))
+                .await
+                .unwrap()
+                .expect("直传后目标应存在");
+            assert_eq!(st.size as usize, p1.len());
+
+            // 2) 目录递归复制 A→B
+            copy_dir_inner(
+                id_a,
+                src_dir.clone(),
+                id_b,
+                dst_dir.clone(),
+                Arc::new(AtomicBool::new(false)),
+                &mut |_, _| {},
+            )
+            .await
+            .expect("目录复制失败");
+            let back1 = download_to_vec(id_b, format!("{dst_dir}/f1.bin")).await;
+            let back2 = download_to_vec(id_b, format!("{dst_dir}/sub/f2.bin")).await;
+            assert_eq!(back1, p1, "复制后 f1 内容不一致");
+            assert_eq!(back2, p2, "复制后 f2 内容不一致");
+
+            // 3) 目录打包压缩下载：tar.gz 落本地并解包校验
+            let local_tar = std::env::temp_dir().join("eterm-sftp-src.tar.gz");
+            let _ = std::fs::remove_file(&local_tar);
+            let conn = crate::api::ssh::connect_and_auth(&host, 22, "root", "key", &secret)
+                .await
+                .expect("tar 连接失败");
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            tar_download_inner(
+                conn.as_ref(),
+                src_dir.clone(),
+                local_tar.to_string_lossy().into_owned(),
+                Arc::new(AtomicBool::new(false)),
+                &mut |_, _| {},
+            )
+            .await
+            .expect("tar 下载失败");
+            conn.shutdown().await;
+            assert!(std::fs::metadata(&local_tar).unwrap().len() > 0, "tar 包不应为空");
+            // 解包到临时目录比对
+            let untar = tempfile::tempdir().unwrap();
+            let st = std::process::Command::new("tar")
+                .args(["-xzf", local_tar.to_str().unwrap(), "-C", untar.path().to_str().unwrap()])
+                .status()
+                .unwrap();
+            assert!(st.success(), "解包失败");
+            assert_eq!(
+                std::fs::read(untar.path().join("eterm-sftp-copy-src/f1.bin")).unwrap(),
+                p1,
+                "tar 包内 f1 不一致"
+            );
+            assert_eq!(
+                std::fs::read(untar.path().join("eterm-sftp-copy-src/sub/f2.bin")).unwrap(),
+                p2,
+                "tar 包内 f2 不一致"
+            );
+
+            // 清理
+            let _ = exec_rm_rf(&host, &src_dir).await;
+            let _ = exec_rm_rf(&host, &dst_dir).await;
+            sftp_disconnect(id_a);
+            sftp_disconnect(id_b);
+            let _ = std::fs::remove_file(&local1);
+            let _ = std::fs::remove_file(&local2);
+            let _ = std::fs::remove_file(&local_tar);
+        });
+    }
+
+    /// 经独立连接 exec rm -rf（测试清理；一条命令，输出忽略）。
+    async fn exec_rm_rf(host: &str, path: &str) {
+        let Ok(conn) =
+            crate::api::ssh::connect_and_auth(host, 22, "root", "key", &std::fs::read_to_string(
+                std::env::var("ETERM_SFTP_KEY").unwrap_or_default(),
+            )
+            .unwrap_or_default())
+            .await
+        else {
+            return;
+        };
+        let mut ch = match conn.open_session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let cmd = format!("rm -rf '{}'", path.replace('\'', "'\\''"));
+        let _ = ch.exec(true, cmd.as_str()).await;
+        while let Some(msg) = ch.wait().await {
+            if matches!(msg, russh::ChannelMsg::Close | russh::ChannelMsg::Eof) {
+                break;
+            }
+        }
+        conn.shutdown().await;
+    }
+
+    /// 下载远端文件内容到 Vec（测试比对用）。
+    async fn download_to_vec(id: u64, path: String) -> Vec<u8> {
+        let tmp = std::env::temp_dir().join(format!("eterm-sftp-vec-{}", uuid_like()));
+        download_inner(
+            id,
+            path,
+            tmp.to_string_lossy().into_owned(),
+            false,
+            Arc::new(AtomicBool::new(false)),
+            |_, _| {},
+        )
+        .await
+        .expect("回读失败");
+        let out = std::fs::read(&tmp).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        out
+    }
+
+    fn uuid_like() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos() as u64
+            ^ std::process::id() as u64
     }
 
     /// k7 真机：取消 + 断点续传（上/下）+ 覆盖语义（环境同 roundtrip；默认跳过）。

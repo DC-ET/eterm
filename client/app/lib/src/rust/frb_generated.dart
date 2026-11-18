@@ -76,7 +76,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1152086080;
+  int get rustContentHash => 1627403887;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -153,6 +153,23 @@ abstract class RustLibApi extends BaseApi {
     required String secret,
   });
 
+  Stream<SftpProgress> crateApiSftpSftpCopy({
+    required BigInt idFrom,
+    required int jobId,
+    required String pathFrom,
+    required BigInt idTo,
+    required String pathTo,
+    required bool resume,
+  });
+
+  Stream<SftpProgress> crateApiSftpSftpCopyDir({
+    required BigInt idFrom,
+    required int jobId,
+    required String dirFrom,
+    required BigInt idTo,
+    required String dirTo,
+  });
+
   void crateApiSftpSftpDisconnect({required BigInt id});
 
   Stream<SftpProgress> crateApiSftpSftpDownload({
@@ -197,6 +214,17 @@ abstract class RustLibApi extends BaseApi {
   Future<SftpEntry?> crateApiSftpSftpStat({
     required BigInt id,
     required String path,
+  });
+
+  Stream<SftpProgress> crateApiSftpSftpTarDownload({
+    required String host,
+    required int port,
+    required String user,
+    required String authKind,
+    required String secret,
+    required int jobId,
+    required String remoteDir,
+    required String localPath,
   });
 
   void crateApiSftpSftpTransferCancel({required int jobId});
@@ -779,13 +807,113 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  Stream<SftpProgress> crateApiSftpSftpCopy({
+    required BigInt idFrom,
+    required int jobId,
+    required String pathFrom,
+    required BigInt idTo,
+    required String pathTo,
+    required bool resume,
+  }) {
+    final sink = RustStreamSink<SftpProgress>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_u_64(idFrom, serializer);
+            sse_encode_u_32(jobId, serializer);
+            sse_encode_String(pathFrom, serializer);
+            sse_encode_u_64(idTo, serializer);
+            sse_encode_String(pathTo, serializer);
+            sse_encode_bool(resume, serializer);
+            sse_encode_StreamSink_sftp_progress_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 20,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_String,
+          ),
+          constMeta: kCrateApiSftpSftpCopyConstMeta,
+          argValues: [idFrom, jobId, pathFrom, idTo, pathTo, resume, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiSftpSftpCopyConstMeta => const TaskConstMeta(
+    debugName: "sftp_copy",
+    argNames: [
+      "idFrom",
+      "jobId",
+      "pathFrom",
+      "idTo",
+      "pathTo",
+      "resume",
+      "sink",
+    ],
+  );
+
+  @override
+  Stream<SftpProgress> crateApiSftpSftpCopyDir({
+    required BigInt idFrom,
+    required int jobId,
+    required String dirFrom,
+    required BigInt idTo,
+    required String dirTo,
+  }) {
+    final sink = RustStreamSink<SftpProgress>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_u_64(idFrom, serializer);
+            sse_encode_u_32(jobId, serializer);
+            sse_encode_String(dirFrom, serializer);
+            sse_encode_u_64(idTo, serializer);
+            sse_encode_String(dirTo, serializer);
+            sse_encode_StreamSink_sftp_progress_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 21,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_String,
+          ),
+          constMeta: kCrateApiSftpSftpCopyDirConstMeta,
+          argValues: [idFrom, jobId, dirFrom, idTo, dirTo, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiSftpSftpCopyDirConstMeta => const TaskConstMeta(
+    debugName: "sftp_copy_dir",
+    argNames: ["idFrom", "jobId", "dirFrom", "idTo", "dirTo", "sink"],
+  );
+
+  @override
   void crateApiSftpSftpDisconnect({required BigInt id}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -824,7 +952,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 21,
+              funcId: 23,
               port: port_,
             );
           },
@@ -860,7 +988,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -892,7 +1020,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -924,7 +1052,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -956,7 +1084,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -990,7 +1118,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1024,7 +1152,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1056,7 +1184,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1075,13 +1203,85 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "sftp_stat", argNames: ["id", "path"]);
 
   @override
+  Stream<SftpProgress> crateApiSftpSftpTarDownload({
+    required String host,
+    required int port,
+    required String user,
+    required String authKind,
+    required String secret,
+    required int jobId,
+    required String remoteDir,
+    required String localPath,
+  }) {
+    final sink = RustStreamSink<SftpProgress>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_String(host, serializer);
+            sse_encode_u_16(port, serializer);
+            sse_encode_String(user, serializer);
+            sse_encode_String(authKind, serializer);
+            sse_encode_String(secret, serializer);
+            sse_encode_u_32(jobId, serializer);
+            sse_encode_String(remoteDir, serializer);
+            sse_encode_String(localPath, serializer);
+            sse_encode_StreamSink_sftp_progress_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 31,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_String,
+          ),
+          constMeta: kCrateApiSftpSftpTarDownloadConstMeta,
+          argValues: [
+            host,
+            port,
+            user,
+            authKind,
+            secret,
+            jobId,
+            remoteDir,
+            localPath,
+            sink,
+          ],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiSftpSftpTarDownloadConstMeta =>
+      const TaskConstMeta(
+        debugName: "sftp_tar_download",
+        argNames: [
+          "host",
+          "port",
+          "user",
+          "authKind",
+          "secret",
+          "jobId",
+          "remoteDir",
+          "localPath",
+          "sink",
+        ],
+      );
+
+  @override
   void crateApiSftpSftpTransferCancel({required int jobId}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(jobId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1123,7 +1323,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 30,
+              funcId: 33,
               port: port_,
             );
           },
@@ -1152,7 +1352,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1189,7 +1389,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(secret, serializer);
           sse_encode_u_32(cols, serializer);
           sse_encode_u_32(rows, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_64,
@@ -1216,7 +1416,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(id, serializer);
           sse_encode_StreamSink_ssh_event_Sse(sink, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1255,7 +1455,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1289,7 +1489,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(id, serializer);
           sse_encode_u_32(cols, serializer);
           sse_encode_u_32(rows, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1315,7 +1515,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(id, serializer);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1342,7 +1542,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(changesJson, serializer);
           sse_encode_u_64(cursor, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1366,7 +1566,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_64,
@@ -1388,7 +1588,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
