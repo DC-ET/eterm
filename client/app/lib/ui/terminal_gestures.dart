@@ -216,9 +216,28 @@ class TerminalPrefs {
   static const _fontSizeKey = 'terminal.font_size';
   static const _extraKeysKey = 'terminal.extra_keys';
 
-  static const double defaultFontSize = 13.5;
+  /// 桌面默认字号。
+  static const double desktopFontSize = 13.5;
+
+  /// 触屏默认字号：手机屏密度高、物理宽度小，13.5 单屏可见列数太少
+  /// （任务清单 #2），默认 11.5 让单屏信息量接近桌面 80 列习惯。
+  static const double touchFontSize = 11.5;
+
   static const double minFontSize = 9.0;
   static const double maxFontSize = 24.0;
+
+  /// 平台默认字号（桌面 13.5 / 触屏 11.5；测试主机是桌面 → 测试恒定）。
+  static double get defaultFontSize =>
+      _isTouchDevice ? touchFontSize : desktopFontSize;
+
+  static final bool _isTouchDevice = () {
+    try {
+      return defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS;
+    } catch (_) {
+      return false;
+    }
+  }();
 
   /// 附加键条默认键序（id → 行为见 terminal_tab.dart 的分发）。
   static const List<String> defaultExtraKeys = [
