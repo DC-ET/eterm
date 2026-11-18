@@ -183,6 +183,63 @@ describe("ws broadcast", () => {
     ws.close();
     // app.close 交给 afterAll 统一执行（共享实例，勿在此关闭）
   });
+
+  // 放在依赖 alice-password 的用例之后：结束时把密码改回去，token 一并刷新
+  it("修改密码：401/400 校验 + 成功后旧密码失效", async () => {
+    // 未认证
+    let r = await doReq("POST", "/api/v1/auth/password", "", {
+      old_password: "x",
+      new_password: "y".repeat(8),
+    });
+    expect(r.statusCode).toBe(401);
+
+    // 旧密码错误
+    r = await doReq("POST", "/api/v1/auth/password", token, {
+      old_password: "wrong-old",
+      new_password: "alice-new-password",
+    });
+    expect(r.statusCode).toBe(401);
+    expect(r.json()).toEqual({ error: "bad_credentials" });
+
+    // 新密码过短
+    r = await doReq("POST", "/api/v1/auth/password", token, {
+      old_password: "alice-password",
+      new_password: "short",
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: "weak_password" });
+
+    // 成功修改 → 旧密码登录失败、新密码登录成功
+    r = await doReq("POST", "/api/v1/auth/password", token, {
+      old_password: "alice-password",
+      new_password: "alice-temp-password",
+    });
+    expect(r.statusCode).toBe(200);
+
+    r = await doReq("POST", "/api/v1/auth/login", "", {
+      username: "alice",
+      password: "alice-password",
+      device_name: "pw-test",
+      platform: "macos",
+    });
+    expect(r.statusCode).toBe(401);
+
+    r = await doReq("POST", "/api/v1/auth/login", "", {
+      username: "alice",
+      password: "alice-temp-password",
+      device_name: "pw-test",
+      platform: "macos",
+    });
+    expect(r.statusCode).toBe(200);
+
+    // 改回原密码，保证 rate-limit 用例之前的状态一致
+    token = r.json()["token"];
+    r = await doReq("POST", "/api/v1/auth/password", token, {
+      old_password: "alice-temp-password",
+      new_password: "alice-password",
+    });
+    expect(r.statusCode).toBe(200);
+  });
 });
 
 describe("login rate limit", () => {

@@ -87,6 +87,14 @@ class ApiClient {
     }
   }
 
+  /// 修改中枢账号密码（需验证旧密码；成功后其余会话仍有效）。
+  Future<void> changePassword(String oldPassword, String newPassword) async {
+    await _req('POST', '/api/v1/auth/password', {
+      'old_password': oldPassword,
+      'new_password': newPassword,
+    });
+  }
+
   /// 会话探活：返回当前用户名（恢复会话时校验 token 有效性）。
   Future<String> me() async {
     final j = await _req('GET', '/api/v1/me');

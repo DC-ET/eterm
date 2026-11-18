@@ -1,22 +1,39 @@
-// 设置页（任务清单 #3）：外观（浅色/深色/跟随系统）、终端字号、辅助键条重排、关于。
-// 主题切换经 ThemeController（全局重建，Et 令牌 + Material 同源）；字号即改即存。
-// 账户区（登录信息/修改密码/退出登录）在任务清单 #5 落位于此。
+// 设置页（任务清单 #3/#5）：账户（修改密码/退出登录）、外观（浅色/深色/跟随系统）、
+// 终端字号、辅助键条重排、关于。主题切换经 ThemeController（全局重建，Et 令牌 +
+// Material 同源）；字号即改即存。登录信息不再放侧栏/标题栏，统一收敛在此。
 
 import 'package:material_ui/material_ui.dart';
 
+import '../services/api_client.dart';
+import '../services/app_state.dart';
 import 'terminal_gestures.dart';
 import 'terminal_tab.dart';
 import 'theme.dart';
 
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({
+    super.key,
+    required this.app,
+    required this.username,
+    required this.onLogout,
+  });
+
+  final AppState app;
+  final String username;
+  final VoidCallback onLogout;
 
   @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  @override
   Widget build(BuildContext context) {
+    Theme.of(context); // 主题切换时随 inherited 重建（Et 静态令牌不感知）
     final compact = MediaQuery.sizeOf(context).width < 720;
-    final body = ListView(
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, compact ? 8 : 18,
-          compact ? 16 : 24, 24),
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+          compact ? 16 : 24, compact ? 8 : 18, compact ? 16 : 24, 24),
       children: [
         if (!compact)
           Text('Settings',
@@ -25,6 +42,67 @@ class SettingsPage extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   color: Et.textPrimary)),
         if (!compact) const SizedBox(height: 12),
+        _sectionTitle('账户'),
+        _card(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Et.tileHost,
+                      borderRadius: BorderRadius.circular(21),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      widget.username.isEmpty
+                          ? '?'
+                          : widget.username.characters.first.toUpperCase(),
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: Et.primaryBtnText),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.username,
+                            style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Et.textPrimary)),
+                        SizedBox(height: 2),
+                        Text('中枢账号 · 凭据与主机随此账号同步',
+                            style: TextStyle(
+                                fontSize: 12.5, color: Et.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Divider(height: 24, color: Et.cardBorder),
+              _navRow(
+                icon: Icons.lock_outline,
+                title: '修改密码',
+                subtitle: '验证原密码后设置新密码',
+                onTap: _changePassword,
+              ),
+              _navRow(
+                icon: Icons.logout,
+                title: '退出登录',
+                subtitle: '清除本机缓存并返回登录页',
+                onTap: _confirmLogout,
+                destructive: true,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
         _sectionTitle('外观'),
         // 勿加 const：主题重建时 const 实例会被 Flutter 跳过
         _card(child: _ThemeModePicker()),
@@ -37,7 +115,6 @@ class SettingsPage extends StatelessWidget {
               _FontSizeSlider(),
               Divider(height: 24, color: Et.cardBorder),
               _navRow(
-                context,
                 icon: Icons.swap_vert,
                 title: '重排辅助键条',
                 subtitle: '自定义终端键条按键顺序',
@@ -78,7 +155,51 @@ class SettingsPage extends StatelessWidget {
         ),
       ],
     );
-    return body;
+  }
+
+  // ---------- 修改密码 ----------
+
+  Future<void> _changePassword() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ChangePasswordDialog(app: widget.app),
+    );
+    if (ok == true && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('密码已更新')));
+    }
+  }
+
+  Future<void> _confirmLogout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Et.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('退出登录',
+            style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
+        content: Text('将清除本机缓存并返回登录页，主机与凭据保留在中枢。',
+            style: TextStyle(
+                fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child:
+                  Text('取消', style: TextStyle(color: Et.textSecondary))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Et.danger,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(9))),
+              child: const Text('退出')),
+        ],
+      ),
+    );
+    if (ok == true) widget.onLogout();
   }
 
   Widget _sectionTitle(String t) => Padding(
@@ -107,21 +228,22 @@ class SettingsPage extends StatelessWidget {
         ),
       );
 
-  Widget _navRow(
-    BuildContext context, {
+  Widget _navRow({
     required IconData icon,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    bool destructive = false,
   }) =>
       InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
             children: [
-              Icon(icon, size: 20, color: Et.textSecondary),
+              Icon(icon,
+                  size: 20, color: destructive ? Et.danger : Et.textSecondary),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -131,7 +253,8 @@ class SettingsPage extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w600,
-                            color: Et.textPrimary)),
+                            color:
+                                destructive ? Et.danger : Et.textPrimary)),
                     const SizedBox(height: 2),
                     Text(subtitle,
                         style: TextStyle(
@@ -139,10 +262,166 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right,
-                  size: 20, color: Et.textSecondary),
+              Icon(Icons.chevron_right, size: 20, color: Et.textSecondary),
             ],
           ),
+        ),
+      );
+}
+
+// ---------- 修改密码对话框 ----------
+// obscureText 与 maxLines 必须同时为 1（material_ui 断言，任务清单 #10 同源）。
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog({required this.app});
+  final AppState app;
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _old = TextEditingController();
+  final _new = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _obscureOld = true;
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _old.dispose();
+    _new.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_old.text.isEmpty) {
+      setState(() => _error = '请填写原密码');
+      return;
+    }
+    if (_new.text.length < 8) {
+      setState(() => _error = '新密码至少 8 位');
+      return;
+    }
+    if (_new.text != _confirm.text) {
+      setState(() => _error = '两次输入的新密码不一致');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.app.api.changePassword(_old.text, _new.text);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = switch (e.status) {
+          401 => '原密码错误',
+          400 => '新密码至少 8 位',
+          _ => '修改失败: ${e.error}',
+        };
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Et.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('修改密码',
+          style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: Et.textPrimary)),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _field(_old, '原密码',
+                obscure: _obscureOld,
+                onToggle: () => setState(() => _obscureOld = !_obscureOld)),
+            const SizedBox(height: 12),
+            _field(_new, '新密码（至少 8 位）',
+                obscure: _obscureNew,
+                onToggle: () => setState(() => _obscureNew = !_obscureNew)),
+            const SizedBox(height: 12),
+            _field(_confirm, '确认新密码',
+                obscure: _obscureConfirm,
+                onToggle: () =>
+                    setState(() => _obscureConfirm = !_obscureConfirm)),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(_error!, style: TextStyle(fontSize: 13, color: Et.danger)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary))),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          style: FilledButton.styleFrom(
+            backgroundColor: Et.primaryBtn,
+            foregroundColor: Et.primaryBtnText,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+            minimumSize: const Size(0, 42),
+          ),
+          child: _busy
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('确认修改'),
+        ),
+      ],
+    );
+  }
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    required bool obscure,
+    required VoidCallback onToggle,
+  }) =>
+      TextFormField(
+        controller: c,
+        obscureText: obscure,
+        maxLines: 1, // obscure 与多行互斥（material_ui 断言）
+        autocorrect: false,
+        style: TextStyle(fontSize: 14, color: Et.textPrimary),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(fontSize: 13, color: Et.textSecondary),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          suffixIcon: IconButton(
+            icon: Icon(obscure ? Icons.visibility_off : Icons.visibility,
+                size: 18, color: Et.textSecondary),
+            onPressed: onToggle,
+          ),
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 0, minHeight: 0),
         ),
       );
 }

@@ -141,15 +141,17 @@ class _ShellPageState extends State<ShellPage> {
           app: widget.app,
           onOpenTerminal: openTerminal,
           openHostIds: {for (final t in tabs) t.host.id},
-          onLogout: _logout,
-          mobileUsername: widget.username,
+          onOpenSettings: () => setState(() => navIndex = 5),
         ),
       1 => KeychainPage(app: widget.app),
       2 => PortForwardingPage(app: widget.app),
       // 勿加 const：Shell 随主题重建时 const 实例会被 Flutter 跳过（identical）
       3 => KnownHostsPage(),
       4 => LogsPage(),
-      _ => SettingsPage(),
+      _ => SettingsPage(
+          app: widget.app,
+          username: widget.username,
+          onLogout: _logout),
     };
     // 手机：内容满幅 + 底部导航（仅收纳有实质功能的页；占位页留在桌面侧栏）
     final vaultView = compact
@@ -180,9 +182,7 @@ class _ShellPageState extends State<ShellPage> {
             children: [
               _Sidebar(
                 navIndex: navIndex,
-                username: widget.username,
                 onSelect: (i) => setState(() => navIndex = i),
-                onLogout: _logout,
               ),
               Expanded(child: content),
             ],
@@ -238,13 +238,11 @@ class _ShellPageState extends State<ShellPage> {
         children: [
           if (!compact) ...[
             _TitleBar(
-              username: widget.username,
               tabs: tabs,
               activeTab: activeTab,
               onSelectVault: () => setState(() => activeTab = -1),
               onSelectTab: (i) => setState(() => activeTab = i),
               onCloseTab: closeTab,
-              onLogout: _logout,
             ),
             if (widget.app.loading)
               LinearProgressIndicator(minHeight: 2, color: Et.accent),
@@ -390,22 +388,18 @@ class _MobileTabBar extends StatelessWidget {
 
 class _TitleBar extends StatelessWidget {
   const _TitleBar({
-    required this.username,
     required this.tabs,
     required this.activeTab,
     required this.onSelectVault,
     required this.onSelectTab,
     required this.onCloseTab,
-    required this.onLogout,
   });
 
-  final String username;
   final List<_TerminalTab> tabs;
   final int activeTab;
   final VoidCallback onSelectVault;
   final void Function(int) onSelectTab;
   final void Function(int) onCloseTab;
-  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -420,7 +414,7 @@ class _TitleBar extends StatelessWidget {
         child: Row(
           children: [
             const SizedBox(width: 78), // 交通灯让位区
-            _VaultPill(username: username, onLogout: onLogout, onSelectVault: onSelectVault),
+            _VaultPill(onSelectVault: onSelectVault),
             const SizedBox(width: 10),
             // 标签区：多了横向滚动，不挤溢通知钮
             Expanded(
@@ -451,31 +445,8 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _VaultPill extends StatelessWidget {
-  const _VaultPill({
-    required this.username,
-    required this.onLogout,
-    required this.onSelectVault,
-  });
-  final String username;
-  final VoidCallback onLogout;
+  const _VaultPill({required this.onSelectVault});
   final VoidCallback onSelectVault;
-
-  void _showMenu(BuildContext context) {
-    final box = context.findRenderObject()! as RenderBox;
-    final pos = box.localToGlobal(Offset.zero);
-    showMenu<String>(
-      context: context,
-      color: Et.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height, pos.dx + box.size.width, 0),
-      items: [
-        PopupMenuItem(enabled: false, child: Text('已登录：$username')),
-        const PopupMenuItem(value: 'logout', child: Text('退出登录')),
-      ],
-    ).then((v) {
-      if (v == 'logout') onLogout();
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -485,51 +456,28 @@ class _VaultPill extends StatelessWidget {
         color: Et.titleBarPill,
         borderRadius: BorderRadius.circular(9),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 胶囊本体：回到 vault 列表视图（终端标签激活时的返回途径）
-          Material(
-            color: Colors.transparent,
-            borderRadius: const BorderRadius.horizontal(left: Radius.circular(9)),
-            child: InkWell(
-              onTap: onSelectVault,
-              borderRadius:
-                  const BorderRadius.horizontal(left: Radius.circular(9)),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.dns, size: 16, color: Et.titleBarText),
-                    SizedBox(width: 7),
-                    Text('Vaults',
-                        style: TextStyle(
-                            color: Et.titleBarText,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          onTap: onSelectVault,
+          borderRadius: BorderRadius.circular(9),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.dns, size: 16, color: Et.titleBarText),
+                SizedBox(width: 7),
+                Text('Vaults',
+                    style: TextStyle(
+                        color: Et.titleBarText,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600)),
+              ],
             ),
           ),
-          // chevron：账户菜单
-          Material(
-            color: Colors.transparent,
-            borderRadius:
-                const BorderRadius.horizontal(right: Radius.circular(9)),
-            child: InkWell(
-              onTap: () => _showMenu(context),
-              borderRadius:
-                  const BorderRadius.horizontal(right: Radius.circular(9)),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                child: Icon(Icons.keyboard_arrow_down,
-                    size: 16, color: Color(0xFF9AA1B0)),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -600,15 +548,11 @@ class _TermTabPill extends StatelessWidget {
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.navIndex,
-    required this.username,
     required this.onSelect,
-    required this.onLogout,
   });
 
   final int navIndex;
-  final String username;
   final void Function(int) onSelect;
-  final VoidCallback onLogout;
 
   static const _items = [
     (Icons.dns_outlined, 'Hosts'),
@@ -685,7 +629,7 @@ class _Sidebar extends StatelessWidget {
           const Spacer(),
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Text('eterm · $username',
+            child: Text('eterm',
                 style: TextStyle(
                     fontSize: 11.5, color: Et.textSecondary)),
           ),

@@ -48,6 +48,30 @@ export async function getUserByUsername(db: Db, username: string): Promise<UserR
   };
 }
 
+export async function getUserById(db: Db, userId: string): Promise<UserRow | null> {
+  const [rows] = await db.pool.query<RowDataPacket[]>(
+    `SELECT id, username, pwd_hash, failed_count, locked_until, created_at FROM users WHERE id = ?`,
+    [db.uuidToBytes(userId)],
+  );
+  if (rows.length === 0) return null;
+  const r = rows[0]!;
+  return {
+    id: db.bytesToUuid(r["id"] as Buffer),
+    username: r["username"] as string,
+    pwdHash: r["pwd_hash"] as string,
+    failedCount: Number(r["failed_count"]),
+    lockedUntil: (r["locked_until"] as Date | null) ?? null,
+  };
+}
+
+/** 更新密码哈希；顺带清失败计数与锁定（改密本身已验证旧密码）。 */
+export async function updatePassword(db: Db, userId: string, pwdHash: string): Promise<void> {
+  await db.pool.query(
+    `UPDATE users SET pwd_hash = ?, failed_count = 0, locked_until = NULL WHERE id = ?`,
+    [pwdHash, db.uuidToBytes(userId)],
+  );
+}
+
 /** 失败计数 +1；达到阈值则锁定，返回锁定截止时间。 */
 export async function registerLoginFailure(
   db: Db,

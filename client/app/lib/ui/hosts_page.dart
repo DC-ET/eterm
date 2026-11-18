@@ -15,15 +15,13 @@ class HostsPage extends StatefulWidget {
     required this.app,
     required this.onOpenTerminal,
     required this.openHostIds,
-    this.onLogout,
-    this.mobileUsername = '',
+    required this.onOpenSettings,
   });
 
   final AppState app;
   final void Function(HostView) onOpenTerminal;
   final Set<String> openHostIds; // 已开终端标签的主机 id
-  final VoidCallback? onLogout; // 手机 app bar 账号菜单用（桌面走侧栏/标题栏）
-  final String mobileUsername; // 手机 app bar 账号菜单展示
+  final VoidCallback onOpenSettings; // 手机 app bar 齿轮 → 设置页（任务清单 #5）
 
   @override
   State<HostsPage> createState() => _HostsPageState();
@@ -393,33 +391,9 @@ class _HostsPageState extends State<HostsPage> {
 
   Widget _mobileAppBar(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
+      padding: const EdgeInsets.fromLTRB(16, 6, 8, 2),
       child: Row(
         children: [
-          // 账号胶囊：点击弹菜单（登出）
-          InkWell(
-            onTap: () => _accountMenu(context),
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: Et.card.withAlpha(150),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.dns, size: 17, color: Et.textPrimary),
-                  SizedBox(width: 6),
-                  Text('Vaults',
-                      style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: Et.textPrimary)),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
           Text('Hosts',
               style: TextStyle(
                   fontSize: 21,
@@ -430,6 +404,12 @@ class _HostsPageState extends State<HostsPage> {
             onPressed: () => setState(() => _showSearch = !_showSearch),
             icon: Icon(Icons.search, size: 23, color: Et.textPrimary),
             tooltip: '搜索',
+          ),
+          IconButton(
+            onPressed: widget.onOpenSettings,
+            icon: Icon(Icons.settings_outlined,
+                size: 22, color: Et.textPrimary),
+            tooltip: '设置（账号/外观/退出登录）',
           ),
         ],
       ),
@@ -592,28 +572,6 @@ class _HostsPageState extends State<HostsPage> {
         ],
       ),
     );
-  }
-
-  void _accountMenu(BuildContext context) {
-    showMenu<String>(
-      context: context,
-      color: Et.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: const RelativeRect.fromLTRB(12, 52, 240, 0),
-      items: [
-        PopupMenuItem(
-            enabled: false,
-            child: Text('已登录：${widget.mobileUsername}',
-                style: const TextStyle(fontSize: 13.5))),
-        PopupMenuItem(
-            value: 'logout',
-            height: 40,
-            child: Text('退出登录',
-                style: TextStyle(fontSize: 13.5, color: Et.textPrimary))),
-      ],
-    ).then((v) {
-      if (v == 'logout') widget.onLogout?.call();
-    });
   }
 
   Widget _viewToggle(IconData icon, bool active) => IconButton(

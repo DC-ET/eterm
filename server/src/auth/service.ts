@@ -10,6 +10,7 @@ export const LOCK_DURATION_SECS = 15 * 60;
 export class BadCredentialsError {}
 export class DeviceNameError {}
 export class NoVaultError {}
+export class WeakPasswordError {}
 export class LockedError {
   constructor(readonly until: Date) {}
 }
@@ -79,6 +80,26 @@ export class AuthService {
       ip,
     );
     return { token, deviceId, userId: u.id, username: u.username, vaultId };
+  }
+
+  /** 修改密码：验证旧密码（错误计审计，不参与登录锁定）→ Argon2id 重哈希落库。 */
+  async changePassword(
+    userId: string,
+    oldPassword: string,
+    newPassword: string,
+    ip: string | null,
+  ): Promise<void> {
+    const { verifyPassword, hashPassword } = await import("./argon.ts");
+    const u = await userstore.getUserById(this.db, userId);
+    if (!u) throw new BadCredentialsError();
+    if (!(await verifyPassword(oldPassword, this.pepper, u.pwdHash))) {
+      await userstore.audit(this.db, userId, null, "auth.password.change.fail", "", null, null, ip);
+      throw new BadCredentialsError();
+    }
+    if (newPassword.length < 8 || newPassword.length > 128) throw new WeakPasswordError();
+    const hash = await hashPassword(newPassword, this.pepper);
+    await userstore.updatePassword(this.db, userId, hash);
+    await userstore.audit(this.db, userId, null, "auth.password.change.ok", "", null, null, ip);
   }
 }
 

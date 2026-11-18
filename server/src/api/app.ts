@@ -14,6 +14,7 @@ import {
   DeviceNameError,
   LockedError,
   NoVaultError,
+  WeakPasswordError,
   sha256,
 } from "../auth/service.ts";
 
@@ -41,6 +42,7 @@ interface AuthServiceLike {
     platform: string,
     ip: string | null,
   ): Promise<{ token: string; deviceId: string; userId: string; username: string; vaultId: string }>;
+  changePassword(userId: string, oldPassword: string, newPassword: string, ip: string | null): Promise<void>;
 }
 
 type Loc = FastifyRequest & { userCtx?: UserCtx; clientIp?: string };
@@ -246,8 +248,33 @@ export function buildApp(
     }
   });
 
-  app.post("/api/v1/auth/logout", async (req, reply) => {
+  app.post("/api/v1/auth/password", async (req, reply) => {
     const ctx = await authed(req, reply);
+    if (!ctx) return;
+    const body = req.body as { old_password?: string; new_password?: string } | undefined;
+    if (
+      !body ||
+      typeof body.old_password !== "string" ||
+      typeof body.new_password !== "string"
+    ) {
+      return reply.code(400).send({ error: "bad_json" });
+    }
+    try {
+      await deps.auth.changePassword(
+        ctx.userId,
+        body.old_password,
+        body.new_password,
+        (req as Loc).clientIp ?? null,
+      );
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof BadCredentialsError) return reply.code(401).send({ error: "bad_credentials" });
+      if (e instanceof WeakPasswordError) return reply.code(400).send({ error: "weak_password" });
+      throw e;
+    }
+  });
+
+  app.post("/api/v1/auth/logout", async (req, reply) => {    const ctx = await authed(req, reply);
     if (!ctx) return;
     const hit = await userstore.revokeDevice(deps.db, ctx.userId, ctx.deviceId);
     if (hit) {
