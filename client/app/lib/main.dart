@@ -18,6 +18,7 @@ import 'services/realtime.dart';
 import 'services/app_state.dart';
 import 'ui/login_page.dart';
 import 'ui/shell.dart';
+import 'ui/terminal_gestures.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
@@ -87,6 +88,9 @@ class _BootState extends State<_Boot> {
       local.initCore(dataDir: dir.path);
       // 外观偏好（浅/深/跟随系统）：kv 依赖 init_core，须在其后恢复
       ThemeController.instance.load();
+      // 终端本地偏好（字号/键序）：启动即恢复（复审必修 B）——
+      // SFTP 编辑器与设置页滑杆不经过终端标签也要读到持久值
+      TerminalPrefs.load();
     } catch (e) {
       // DB 不可用时恢复链必然级联失败（restore/clear 都要开库）——终止并给出重试
       if (!mounted) return;

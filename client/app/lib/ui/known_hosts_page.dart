@@ -4,9 +4,11 @@
 
 import 'package:eterm/src/rust/api/ssh.dart' as ssh;
 import 'package:eterm/src/rust/store.dart' as store;
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class KnownHostsPage extends StatefulWidget {
   const KnownHostsPage({super.key});
@@ -95,6 +97,15 @@ class _KnownHostsPageState extends State<KnownHostsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (!compact)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              child: Text('Known Hosts',
+                  style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w700,
+                      color: Et.textPrimary)),
+            ),
           // 说明条：TOFU 机制一句话
           Padding(
             padding:
@@ -182,6 +193,13 @@ class _KnownHostCard extends StatelessWidget {
   final store.KnownHost item;
   final VoidCallback onRemove;
 
+  Future<void> _copyFingerprint(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: item.fingerprint));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('指纹已复制')));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -224,7 +242,12 @@ class _KnownHostCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(item.firstSeen,
+              IconButton(
+                icon: Icon(Icons.copy, size: 15, color: Et.textSecondary),
+                tooltip: '复制指纹',
+                onPressed: () => _copyFingerprint(context),
+              ),
+              Text(fmtLocalTime(item.firstSeen),
                   style: TextStyle(
                       fontSize: 11.5, color: Et.textSecondary)),
               IconButton(

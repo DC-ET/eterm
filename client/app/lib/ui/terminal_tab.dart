@@ -26,18 +26,21 @@ class TerminalTabView extends StatefulWidget {
     required this.terminal,
     required this.authKind,
     required this.secret,
+    this.onPhase, // 会话阶段回写（shell 标签 pill 状态点，评审 P2）
   });
 
   final HostView host;
   final Terminal terminal;
   final String authKind; // password | key
   final String secret;
+  final void Function(TermPhase phase)? onPhase;
 
   @override
   State<TerminalTabView> createState() => _TerminalTabViewState();
 }
 
-enum _TermPhase { connecting, live, closed }
+/// 终端会话阶段（shell 标签 pill 状态点共用此枚举）。
+enum TermPhase { connecting, live, closed }
 
 /// 终端等宽字体（各平台原生等宽族；xterm 默认字体在 Android 偏模糊）
 final _monoFont = Platform.isWindows
@@ -49,9 +52,10 @@ final _monoFont = Platform.isWindows
 class _TerminalTabViewState extends State<TerminalTabView> {
   final _bytes = StreamController<List<int>>();
   final _focus = FocusNode();
+  final _controller = TerminalController(); // 右键菜单复制/全选需要
   StreamSubscription<ssh.SshEvent>? _sub;
   BigInt? _sessionId;
-  _TermPhase _phase = _TermPhase.connecting;
+  TermPhase _phase = TermPhase.connecting;
   String? _reason;
   bool _ctrlArmed = false; // 辅助键条：Ctrl 粘滞（下一个可组合字符发送控制码）
 
@@ -69,7 +73,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     _term.onOutput = _onOutput;
     _term.onResize = (width, height, _, _) {
       final id = _sessionId;
-      if (id != null && _phase == _TermPhase.live) {
+      if (id != null && _phase == TermPhase.live) {
         ssh.sshResize(id: id, cols: width, rows: height);
       }
     };
@@ -81,7 +85,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   void dispose() {
     _sub?.cancel(); // 先断事件流：Closed 事件不得在 dispose 后抵达
     final id = _sessionId;
-    if (id != null && _phase != _TermPhase.closed) {
+    if (id != null && _phase != TermPhase.closed) {
       try {
         ssh.sshClose(id: id);
       } catch (_) {} // 会话可能已被远端关闭并从注册表移除（close 幂等防御）
@@ -89,7 +93,18 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     _bytes.close();
     _menuTimer?.cancel();
     _focus.dispose();
+    _controller.dispose();
     super.dispose();
+  }
+
+  /// 阶段切换统一入口：UI 状态 + shell pill 状态点同步回写。
+  void _setPhase(TermPhase p, {String? reason}) {
+    if (!mounted) return;
+    setState(() {
+      _phase = p;
+      _reason = reason;
+    });
+    widget.onPhase?.call(p);
   }
 
   /// 输出通道：dispose 后（_bytes 已 close）静默丢弃，杜绝 StateError。
@@ -101,7 +116,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   /// （Ctrl+C = 0x03 等；可组合范围 0x40-0x5f / 0x61-0x7a）。
   void _onOutput(String data) {
     final id = _sessionId;
-    if (id == null || _phase != _TermPhase.live) return;
+    if (id == null || _phase != TermPhase.live) return;
     if (_ctrlArmed && data.length == 1) {
       final c = data.codeUnitAt(0);
       final combinable = (c >= 0x40 && c <= 0x5f) || (c >= 0x61 && c <= 0x7a);
@@ -117,7 +132,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
 
   void _sendSeq(String seq) {
     final id = _sessionId;
-    if (id == null || _phase != _TermPhase.live) return;
+    if (id == null || _phase != TermPhase.live) return;
     try {
       ssh.sshWrite(id: id, data: Uint8List.fromList(utf8.encode(seq)));
     } catch (_) {} // 会话消失瞬间（Closed 未送达）同步 FFI 异常防御
@@ -128,23 +143,16 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     final h = widget.host;
     _sub?.cancel(); // 重连：先断旧订阅
     _sub = null;
-    if (mounted) {
-      setState(() {
-        _phase = _TermPhase.connecting;
-        _reason = null;
-      });
-    }
+    _setPhase(TermPhase.connecting);
     void fail(String reason) {
       _pushBytes(utf8.encode('\r\n\x1b[31m[错误] $reason\x1b[0m\r\n'));
       try {
-        local.logEvent(kind: 'connect_fail', detail: '${h.label}（$h.hostname）: $reason');
+        // 评审 P1：此前 `$h.hostname` 少花括号，日志里插值成
+        // "Instance of 'HostView'.hostname"
+        local.logEvent(
+            kind: 'connect_fail', detail: '${h.label}（${h.hostname}）: $reason');
       } catch (_) {}
-      if (mounted) {
-        setState(() {
-          _phase = _TermPhase.closed;
-          _reason = reason;
-        });
-      }
+      _setPhase(TermPhase.closed, reason: reason);
     }
 
     try {
@@ -161,8 +169,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
       _sub = ssh.sshEvents(id: id).listen((ev) {
         switch (ev) {
           case ssh.SshEvent_Data():
-            if (_phase == _TermPhase.connecting && mounted) {
-              setState(() => _phase = _TermPhase.live);
+            if (_phase == TermPhase.connecting && mounted) {
+              _setPhase(TermPhase.live);
               try {
                 local.logEvent(kind: 'connect_ok', detail: '${widget.host.label}（${widget.host.hostname}）');
               } catch (_) {}
@@ -176,19 +184,14 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                   kind: 'disconnect',
                   detail: '${widget.host.label}（${widget.host.hostname}）: ${ev.reason}');
             } catch (_) {}
-            if (mounted) {
-              setState(() {
-                _phase = _TermPhase.closed;
-                _reason = ev.reason;
-              });
-            }
+            _setPhase(TermPhase.closed, reason: ev.reason);
         }
       }, onError: (Object e) {
         fail('FFI 错误: $e');
       }, onDone: () {
         // 流结束但未收到 Closed（理论上不应发生）；正常关闭时 Closed 先达，
         // 此处已 closed，不得覆盖真实原因
-        if (_phase != _TermPhase.closed) fail('会话流结束');
+        if (_phase != TermPhase.closed) fail('会话流结束');
       });
     } catch (e) {
       fail('FFI 错误: $e');
@@ -205,7 +208,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     final text = await Clipboard.getData('text/plain');
     final t = text?.text;
     final id = _sessionId;
-    if (t != null && t.isNotEmpty && id != null && _phase == _TermPhase.live) {
+    if (t != null && t.isNotEmpty && id != null && _phase == TermPhase.live) {
       ssh.sshWrite(id: id, data: Uint8List.fromList(utf8.encode(t)));
     }
   }
@@ -213,6 +216,83 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   Future<void> _pasteClipboard() async {
     await _writeClipboardToSession();
     _showKeyboard();
+  }
+
+  // ---------- 桌面右键菜单与字号快捷键（评审 P1） ----------
+
+  /// 右键菜单：复制（有选区时）/ 粘贴 / 全选 / 清除选择。
+  Future<void> _onContextMenu(TapUpDetails d, CellOffset _) async {
+    final selection = _controller.selection;
+    final selText = selection == null ? null : _term.buffer.getText(selection);
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final action = await showMenu<String>(
+      context: context,
+      color: Et.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      // 菜单锚定光标处（小矩形即可，showMenu 自动避免溢出）
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(d.globalPosition.dx, d.globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+            value: 'copy',
+            enabled: selText != null,
+            height: 40,
+            child: _menuItem(Icons.copy_outlined, '复制')),
+        PopupMenuItem(
+            value: 'paste',
+            height: 40,
+            child: _menuItem(Icons.content_paste, '粘贴')),
+        PopupMenuItem(
+            value: 'selectAll',
+            height: 40,
+            child: _menuItem(Icons.select_all, '全选')),
+        if (selText != null)
+          PopupMenuItem(
+              value: 'clear',
+              height: 40,
+              child: _menuItem(Icons.close, '清除选择')),
+      ],
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'copy':
+        if (selText != null) {
+          await Clipboard.setData(ClipboardData(text: selText));
+          _controller.clearSelection();
+        }
+      case 'paste':
+        final data = await Clipboard.getData(Clipboard.kTextPlain);
+        final t = data?.text;
+        if (t != null && t.isNotEmpty) _term.paste(t);
+      case 'selectAll':
+        _controller.setSelection(
+          _term.buffer.createAnchor(0, _term.buffer.height - _term.viewHeight),
+          _term.buffer.createAnchor(
+              _term.viewWidth, _term.buffer.height - 1),
+        );
+      case 'clear':
+        _controller.clearSelection();
+    }
+  }
+
+  Widget _menuItem(IconData icon, String label) => Row(
+        children: [
+          Icon(icon, size: 16, color: Et.textSecondary),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontSize: 13.5, color: Et.textPrimary)),
+        ],
+      );
+
+  /// Cmd/Ctrl +/-（0 重置）调终端字号：即改即存，全部标签生效。
+  void _fontStep(double delta) {
+    TerminalPrefs.setFontSize(TerminalPrefs.fontSize.value + delta);
+  }
+
+  void _fontReset() {
+    TerminalPrefs.setFontSize(TerminalPrefs.defaultFontSize);
   }
 
   // ---------- 移动手势（触屏 only；桌面不动 xterm 默认选择行为） ----------
@@ -361,30 +441,48 @@ class _TerminalTabViewState extends State<TerminalTabView> {
           Expanded(
             child: Stack(
               children: [
-                // 双指捏合改字号（触屏 only）：单指行为完全让给终端内部手势
-                ValueListenableBuilder<double>(
-                  valueListenable: TerminalPrefs.fontSize,
-                  builder: (context, fontSize, _) {
-                    Widget view = TerminalView(
-                      _term,
-                      autofocus: true,
-                      focusNode: _focus,
-                      theme: Et.termTheme,
-                      keyboardAppearance: Et.brightness,
-                      padding: const EdgeInsets.only(left: 10, top: 8),
-                      textStyle: TerminalStyle(
-                          fontSize: fontSize, fontFamily: _monoFont),
-                      // 移动手势（F3.2）：双击=Tab；长按=方向键拖动/粘贴菜单。
-                      // 桌面不传：保留 xterm 默认（双击选词、长按选词）。
-                      onDoubleTap: isTouch ? _onDoubleTap : null,
-                      onLongPressStart:
-                          isTouch ? _onLongPressStart : null,
-                      onLongPressMoveUpdate:
-                          isTouch ? _onLongPressMoveUpdate : null,
-                      onLongPressEnd: isTouch ? _onLongPressEnd : null,
-                      onLongPressCancel:
-                          isTouch ? _onLongPressCancel : null,
-                    );
+                // 桌面 Cmd/Ctrl +/- 调字号（评审 P1：键盘可达性）
+                CallbackShortcuts(
+                  bindings: {
+                    // meta/control 按平台运行时判定，不能 const
+                    SingleActivator(LogicalKeyboardKey.equal,
+                        meta: Platform.isMacOS, control: !Platform.isMacOS):
+                        () => _fontStep(0.5),
+                    SingleActivator(LogicalKeyboardKey.minus,
+                        meta: Platform.isMacOS, control: !Platform.isMacOS):
+                        () => _fontStep(-0.5),
+                    SingleActivator(LogicalKeyboardKey.digit0,
+                        meta: Platform.isMacOS, control: !Platform.isMacOS):
+                        _fontReset,
+                  },
+                  // 双指捏合改字号（触屏 only）：单指行为完全让给终端内部手势
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: TerminalPrefs.fontSize,
+                    builder: (context, fontSize, _) {
+                      Widget view = TerminalView(
+                        _term,
+                        autofocus: true,
+                        focusNode: _focus,
+                        controller: _controller,
+                        theme: Et.termTheme,
+                        keyboardAppearance: Et.brightness,
+                        padding: const EdgeInsets.only(left: 10, top: 8),
+                        textStyle: TerminalStyle(
+                            fontSize: fontSize, fontFamily: _monoFont),
+                        // 桌面右键菜单（评审 P1）：复制/粘贴/全选
+                        onSecondaryTapUp:
+                            isTouch ? null : _onContextMenu,
+                        // 移动手势（F3.2）：双击=Tab；长按=方向键拖动/粘贴菜单。
+                        // 桌面不传：保留 xterm 默认（双击选词、长按选词）。
+                        onDoubleTap: isTouch ? _onDoubleTap : null,
+                        onLongPressStart:
+                            isTouch ? _onLongPressStart : null,
+                        onLongPressMoveUpdate:
+                            isTouch ? _onLongPressMoveUpdate : null,
+                        onLongPressEnd: isTouch ? _onLongPressEnd : null,
+                        onLongPressCancel:
+                            isTouch ? _onLongPressCancel : null,
+                      );
                     if (isTouch) {
                       view = RawGestureDetector(
                         gestures: {
@@ -415,10 +513,11 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                         child: view,
                       );
                     }
-                    return view;
-                  },
+                      return view;
+                    },
+                  ),
                 ),
-                if (_phase == _TermPhase.connecting)
+                if (_phase == TermPhase.connecting)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: Center(
@@ -439,7 +538,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                       ),
                     ),
                   ),
-                if (_phase == _TermPhase.closed)
+                if (_phase == TermPhase.closed)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -448,10 +547,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                       child: Tooltip(
                         message: _reason ?? '重新连接',
                         child: FilledButton.icon(
-                          onPressed: () {
-                            setState(() => _phase = _TermPhase.connecting);
-                            _connect();
-                          },
+                          // _connect 内部先置 connecting（含 pill 回写）
+                          onPressed: _connect,
                           icon: const Icon(Icons.refresh, size: 18),
                           label: const Text('重新连接'),
                           style: FilledButton.styleFrom(

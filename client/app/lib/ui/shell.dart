@@ -49,6 +49,8 @@ class _TerminalTab {
   final String authKind; // password | key
   final String secret;
   final Terminal terminal = Terminal(maxLines: 20000);
+  /// 会话阶段（pill 状态点，评审 P2：断连此前无感知）
+  final phase = ValueNotifier<TermPhase>(TermPhase.connecting);
 }
 
 class _ShellPageState extends State<ShellPage> {
@@ -96,6 +98,9 @@ class _ShellPageState extends State<ShellPage> {
   void closeTab(int i) {
     setState(() {
       tabs.removeAt(i);
+      // phase notifier 不在这里 dispose：TerminalTabView State 帧末才销毁，
+      // 期间 SSH 事件仍可能经 onPhase 回写（复审必修 A：use-after-dispose）。
+      // ValueListenableBuilder unmount 自行解绑，无监听的 notifier 交给 GC。
       if (tabs.isEmpty) {
         activeTab = -1;
       } else if (i < activeTab) {
@@ -225,6 +230,7 @@ class _ShellPageState extends State<ShellPage> {
                   terminal: t.terminal,
               authKind: t.authKind,
               secret: t.secret,
+              onPhase: (p) => t.phase.value = p, // pill 状态点同步
             ),
               ),
               // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
@@ -285,7 +291,7 @@ class _ShellPageState extends State<ShellPage> {
 const _compactNav = [
   (Icons.dns_outlined, 'Hosts'),
   (Icons.folder_copy_outlined, 'SFTP'),
-  (Icons.key_outlined, 'Keys'),
+  (Icons.key_outlined, 'Keychain'),
   (Icons.apps, 'More'),
 ];
 const _compactNavTarget = [0, 1, 2, -1]; // -1 = More 页（占位 navIndex）
@@ -381,6 +387,23 @@ class _MobileTabBar extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // 会话状态点（评审 P2：连接中/已连接/断开 可感知）
+            ValueListenableBuilder<TermPhase>(
+              valueListenable: tabs[i].phase,
+              builder: (context, ph, _) => Container(
+                width: 7,
+                height: 7,
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: switch (ph) {
+                    TermPhase.live => const Color(0xFF2DA44E),
+                    TermPhase.connecting => Et.textSecondary,
+                    TermPhase.closed => Et.danger,
+                  },
+                ),
+              ),
+            ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 170),
               child: Text(tabs[i].host.label,
@@ -392,12 +415,15 @@ class _MobileTabBar extends StatelessWidget {
                       color: Et.textPrimary)),
             ),
             const SizedBox(width: 5),
+            // 关闭按钮：命中区扩到 ~34px（评审 P1：此前约 23px，触屏难点中）
             InkWell(
               onTap: () => onCloseTab(i),
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.close, size: 15, color: Et.textSecondary),
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 34,
+                height: 34,
+                child: Icon(Icons.close,
+                    size: 15, color: Et.textSecondary),
               ),
             ),
           ],
@@ -449,6 +475,7 @@ class _TitleBar extends StatelessWidget {
                       _TermTabPill(
                         label: tabs[i].host.label,
                         active: activeTab == i,
+                        phase: tabs[i].phase,
                         onTap: () => onSelectTab(i),
                         onClose: () => onCloseTab(i),
                         maxLabelWidth: 160,
@@ -512,6 +539,7 @@ class _TermTabPill extends StatelessWidget {
     required this.active,
     required this.onTap,
     required this.onClose,
+    this.phase,
     this.maxLabelWidth = 160,
   });
 
@@ -519,6 +547,7 @@ class _TermTabPill extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
   final VoidCallback onClose;
+  final ValueNotifier<TermPhase>? phase; // 会话状态点（null 不显示）
   final double maxLabelWidth;
 
   @override
@@ -547,14 +576,38 @@ class _TermTabPill extends StatelessWidget {
                           color: Et.titleBarText.withAlpha(active ? 255 : 150),
                           fontSize: 13)),
                 ),
+                if (phase != null) ...[
+                  const SizedBox(width: 6),
+                  // 会话状态点（评审 P2：断连此前无感知）
+                  ValueListenableBuilder<TermPhase>(
+                    valueListenable: phase!,
+                    builder: (context, ph, _) => Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: switch (ph) {
+                          TermPhase.live => const Color(0xFF2DA44E),
+                          TermPhase.connecting =>
+                            Et.titleBarText.withAlpha(150),
+                          TermPhase.closed => Et.danger,
+                        },
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 6),
+                // 关闭按钮：命中区扩到 ~26px（评审 P1）
                 InkWell(
                   onTap: onClose,
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Icon(Icons.close,
-                        size: 14, color: Et.titleBarText.withAlpha(140)),
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: Center(
+                      child: Icon(Icons.close,
+                          size: 14, color: Et.titleBarText.withAlpha(140)),
+                    ),
                   ),
                 ),
               ],

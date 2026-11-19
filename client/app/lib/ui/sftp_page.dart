@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:eterm/services/sftp_transfer_queue.dart';
+import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/api/sftp.dart' as sftp;
 import 'package:file_selector/file_selector.dart';
 import 'package:material_ui/material_ui.dart';
@@ -18,6 +19,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/app_state.dart';
 import 'sftp_edit_page.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 /// 一侧的规格：host == null 表示本机工作区。
 class SftpSideSpec {
@@ -216,35 +218,56 @@ class _SftpDualPageState extends State<SftpDualPage> {
       (s.rentries ?? const []).map((e) => e.name).toSet();
 
   Future<void> _initLocal(_Side s) async {
-    if (!Platform.isAndroid) return; // 桌面：等用户选目录
-    try {
-      // Android：应用专属外部目录（免权限、系统文件管理器可见）
-      final ext = await getExternalStorageDirectory();
-      final base =
-          ext?.path ?? (await getApplicationDocumentsDirectory()).path;
-      final ws = Directory('$base/sftp-local');
-      await ws.create(recursive: true);
-      if (!mounted) return;
-      setState(() {
-        s.lroot = ws.path;
-        s.lpath = ws.path;
-        s.rootFixed = true;
-        s.phase = _SidePhase.localReady;
-      });
-      _lsLocal(s);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        s.phase = _SidePhase.failed;
-        s.reason = '初始化本机目录失败: $e';
-      });
+    if (Platform.isAndroid) {
+      try {
+        // Android：应用专属外部目录（免权限、系统文件管理器可见）
+        final ext = await getExternalStorageDirectory();
+        final base =
+            ext?.path ?? (await getApplicationDocumentsDirectory()).path;
+        final ws = Directory('$base/sftp-local');
+        await ws.create(recursive: true);
+        if (!mounted) return;
+        setState(() {
+          s.lroot = ws.path;
+          s.lpath = ws.path;
+          s.rootFixed = true;
+          s.phase = _SidePhase.localReady;
+        });
+        _lsLocal(s);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          s.phase = _SidePhase.failed;
+          s.reason = '初始化本机目录失败: $e';
+        });
+      }
+      return;
     }
+    // 桌面：恢复上次选择的目录（评审 P1：此前每次打开都要重选）
+    try {
+      final saved = local.kvGet(key: 'sftp.localRoot');
+      if (saved.isNotEmpty && Directory(saved).existsSync()) {
+        if (!mounted) return;
+        setState(() {
+          s.lroot = saved;
+          s.lpath = saved;
+          s.phase = _SidePhase.localReady;
+        });
+        _lsLocal(s);
+        return;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => s.phase = _SidePhase.localPending);
   }
 
   Future<void> _pickLocalRoot(_Side s) async {
     try {
       final dir = await getDirectoryPath();
       if (dir == null || !mounted) return;
+      try {
+        local.kvPut(key: 'sftp.localRoot', value: dir);
+      } catch (_) {}
       setState(() {
         s.lroot = dir;
         s.lpath = dir;
@@ -811,10 +834,20 @@ class _SftpDualPageState extends State<SftpDualPage> {
   Widget build(BuildContext context) {
     Theme.of(context); // 主题切换时随 inherited 重建
     final compact = MediaQuery.sizeOf(context).width < 720;
+    final macGap = !compact && Platform.isMacOS;
     final title = '${_l.label} ⇄ ${_r.label}';
     return Scaffold(
       backgroundColor: Et.contentBg,
       appBar: AppBar(
+        // macOS 隐藏标题栏窗口：默认 leading 会压在交通灯下，
+        // 左移让位（+48 保证 BackButton 完整命中区，复审可选项 1）
+        leadingWidth: macGap ? kMacTitleBarInset + 48 : null,
+        leading: macGap
+            ? const Padding(
+                padding: EdgeInsets.only(left: kMacTitleBarInset),
+                child: BackButton(),
+              )
+            : null,
         backgroundColor: Et.card,
         surfaceTintColor: Et.card,
         elevation: 0.5,
@@ -827,7 +860,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
                     fontSize: 16.5, fontWeight: FontWeight.w600)),
             Text(compact
                 ? _sideSubtitle(_activeSide == 0 ? _l : _r)
-                : '${_sideSubtitle(_l)}  ⇄  ${_sideSubtitle(_r)}',
+                // Menlo 无 ⇄ 字形会回退成 #（复审可选项 3），分隔符用 ·；
+                // 方向语义由上方标题的 ⇄ 承载
+                : '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -1032,6 +1067,32 @@ class _SftpDualPageState extends State<SftpDualPage> {
   Widget _remoteList(_Side s) {
     final entries = s.rentries;
     if (entries == null) return _note('读取目录中…', spinner: true);
+    // 与本地列表同规则排序：目录在前，名称不区分大小写（评审 P2）
+    final sorted = [...entries]..sort((a, b) {
+        if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    if (sorted.isEmpty) {
+      return s.rpath == '/' || s.rpath.isEmpty
+          ? _note('空目录')
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
+              children: [
+                ListTile(
+                  dense: true,
+                  leading: Icon(Icons.arrow_upward,
+                      size: 20, color: Et.textSecondary),
+                  title: const Text('..',
+                      style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+                  onTap: () => _upRemote(s),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: _note('空目录'),
+                ),
+              ],
+            );
+    }
     final canUp = s.rpath != '/' && s.rpath.isNotEmpty;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
@@ -1047,7 +1108,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
             onTap: () => _upRemote(s),
           );
         }
-        final e = entries[i - (canUp ? 1 : 0)];
+        final e = sorted[i - (canUp ? 1 : 0)];
         final other = _otherOf(s);
         final canTransfer = other.isLocal ||
             (other.sessionId != null && other.sessionId != s.sessionId);
@@ -1118,6 +1179,28 @@ class _SftpDualPageState extends State<SftpDualPage> {
       );
     }
     if (entries == null) return _note('读取目录中…', spinner: true);
+    // 与远端列表对称：空目录给占位（复审可选项 2）
+    if (entries.isEmpty) {
+      return s.lroot != null && s.lpath != s.lroot
+          ? ListView(
+              padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
+              children: [
+                ListTile(
+                  dense: true,
+                  leading: Icon(Icons.arrow_upward,
+                      size: 20, color: Et.textSecondary),
+                  title: const Text('..',
+                      style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+                  onTap: () => _upLocal(s),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: _note('空目录'),
+                ),
+              ],
+            )
+          : _note('空目录');
+    }
     final canUp = s.lroot != null && s.lpath != s.lroot; // 浏览根不提供上级
     final other = _otherOf(s);
     final canUpload = !other.isLocal && other.sessionId != null;
@@ -1348,6 +1431,17 @@ class _QueueRow extends StatelessWidget {
               icon: Icon(Icons.refresh, size: 18, color: Et.tileGroup),
             ),
         ]),
+        // 源 → 目标路径上下文（评审 P2：此前队列行看不出传往哪侧）
+        Tooltip(
+          message: '${job.pathFrom} → ${job.pathTo}',
+          child: Text('${job.pathFrom} → ${job.pathTo}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 10.5,
+                  fontFamily: 'Menlo',
+                  color: Et.textSecondary)),
+        ),
         if (job.state == SftpJobState.running) ...[
           const SizedBox(height: 2),
           LinearProgressIndicator(

@@ -63,6 +63,19 @@ class _HostsPageState extends State<HostsPage> {
     return list;
   }
 
+  /// 搜索词也应过滤分组卡（评审 P1：搜主机名时分组区原样全显）
+  List<GroupView> _matchedGroups(List<GroupView> groups) {
+    final q = _search.text.trim().toLowerCase();
+    if (q.isEmpty) return groups;
+    return groups
+        .where((grp) => grp.label.toLowerCase().contains(q))
+        .toList();
+  }
+
+  /// 是否处于过滤态（搜索词或分组筛选）——空态文案随之变化
+  bool get _filtering =>
+      _search.text.trim().isNotEmpty || _groupFilter != null;
+
   void _connect(HostView h) {
     if (!widget.app.credentialFor(h).available) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -133,17 +146,16 @@ class _HostsPageState extends State<HostsPage> {
     }
   }
 
-  void _cardMenu(HostView h, Offset anchorTopLeft, Size anchorSize) {
+  void _cardMenu(HostView h, Rect anchor) {
+    final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
     showMenu<String>(
       context: context,
       color: Et.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: RelativeRect.fromLTRB(
-        anchorTopLeft.dx,
-        anchorTopLeft.dy + anchorSize.height,
-        anchorTopLeft.dx + anchorSize.width,
-        0,
-      ),
+      // 锚点矩形（kebab=按钮框、右键=光标处）→ overlay 相对坐标。
+      // 旧实现把「距左缘距离」当成 fromLTRB 的 right/bottom 传入，
+      // 右列卡片菜单会贴屏溢出（评审 P1）
+      position: RelativeRect.fromRect(anchor, Offset.zero & overlay.size),
       items: [
         PopupMenuItem(
             value: 'connect',
@@ -184,9 +196,10 @@ class _HostsPageState extends State<HostsPage> {
       builder: (context, _) {
         final g = widget.app.groups;
         final h = _matched;
+        final gf = _matchedGroups(g);
         final exact = h.length == 1 ? h.first : null;
         final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
-        if (compact) return _mobileHosts(context, groups: g, hosts: h);
+        if (compact) return _mobileHosts(context, groups: gf, hosts: h);
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
           child: Column(
@@ -242,7 +255,7 @@ class _HostsPageState extends State<HostsPage> {
                     onPressed: exact == null ? null : () => _connect(exact),
                     style: FilledButton.styleFrom(
                       backgroundColor: Et.primaryBtn,
-                      disabledBackgroundColor: const Color(0xFFC9CBD3),
+                      disabledBackgroundColor: Et.disabledBtn,
                       foregroundColor: Et.primaryBtnText,
                       disabledForegroundColor: Colors.white60,
                       shape: RoundedRectangleBorder(
@@ -278,16 +291,9 @@ class _HostsPageState extends State<HostsPage> {
                       backgroundColor: Et.card,
                     ),
                   const Spacer(),
-                  _viewToggle(Icons.grid_view_rounded, true),
-                  _viewToggle(Icons.style_outlined, false),
-                  _viewToggle(Icons.keyboard_alt_outlined, false),
                 ],
               ),
               const SizedBox(height: 8),
-              // 同步进度细条
-              if (widget.app.loading)
-                LinearProgressIndicator(
-                    minHeight: 2, color: Et.accent, backgroundColor: Et.card),
               Expanded(
                 child: widget.app.error == 'unauthorized'
                     ? const SizedBox.shrink() // 壳层正在跳转登录页
@@ -296,7 +302,7 @@ class _HostsPageState extends State<HostsPage> {
                           // 同步失败不打断本地快照展示（离线可见）
                           if (widget.app.error != null)
                             _errorBanner(widget.app.error!),
-                          Expanded(child: _grid(groups: g, hosts: h)),
+                          Expanded(child: _grid(groups: gf, hosts: h)),
                         ],
                       ),
               ),
@@ -450,6 +456,7 @@ class _HostsPageState extends State<HostsPage> {
       return const _CenterNote('同步中…');
     }
     if (hosts.isEmpty && groups.isEmpty) {
+      if (_filtering) return _noMatchState(); // 过滤态空态（评审 P1）
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -503,19 +510,53 @@ class _HostsPageState extends State<HostsPage> {
               icon: Icons.dns_rounded,
               title: host.label,
               subtitle: [
-                'ssh',
-                if (host.username.isNotEmpty) host.username,
+                host.username.isEmpty
+                    ? host.hostname
+                    : '${host.username}@${host.hostname}',
                 if (widget.app.groupName(host.groupId) != null)
                   widget.app.groupName(host.groupId)!,
                 if (!widget.app.credentialFor(host).available) '无凭据',
-              ].join(', '),
+              ].join(' · '),
               danger: !widget.app.credentialFor(host).available,
               open: widget.openHostIds.contains(host.id),
-              onTap: () => _connect(host),
-              onMenu: (tl, size) => _cardMenu(host, tl, size),
+                onTap: () => _connect(host),
+              onMenu: (anchor) => _cardMenu(host, anchor),
             ),
           ),
       ],
+    );
+  }
+
+  /// 搜索/分组过滤无结果：区分于「还没有主机」，提供一键清除
+  Widget _noMatchState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.search_off, size: 34, color: Et.textSecondary),
+          const SizedBox(height: 12),
+          Text('无匹配主机',
+              style: TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w600,
+                  color: Et.textPrimary)),
+          const SizedBox(height: 10),
+          OutlinedButton(
+            onPressed: () => setState(() {
+              _search.clear();
+              _groupFilter = null;
+            }),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Et.textPrimary,
+              side: BorderSide(color: Et.cardBorder),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9)),
+              minimumSize: const Size(0, 38),
+            ),
+            child: const Text('清除搜索'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -560,19 +601,16 @@ class _HostsPageState extends State<HostsPage> {
     );
   }
 
-  Widget _viewToggle(IconData icon, bool active) => IconButton(
-        onPressed: () {},
-        icon: Icon(icon,
-            size: 19,
-            color: active ? Et.textPrimary : const Color(0xFFB9BDC7)),
-      );
-
   Widget _grid(
       {required List<GroupView> groups, required List<HostView> hosts}) {
     if (widget.app.loading && hosts.isEmpty) {
       return const _CenterNote('同步中…');
     }
     if (hosts.isEmpty && groups.isEmpty) {
+      // 过滤态空态 ≠ 真没数据：给「清除搜索」出口（评审 P1）
+      if (_filtering) {
+        return _noMatchState();
+      }
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -625,8 +663,7 @@ class _HostsPageState extends State<HostsPage> {
                 open: widget.openHostIds.contains(h.id),
                 hasCredential: widget.app.credentialFor(h).available,
                 onTap: () => _connect(h),
-                onMenu: (anchorTopLeft, anchorSize) =>
-                    _cardMenu(h, anchorTopLeft, anchorSize),
+                onMenu: (anchor) => _cardMenu(h, anchor),
               );
             },
           ),
@@ -761,23 +798,27 @@ class _HostCard extends StatelessWidget {
   final bool open; // 已有打开的终端标签
   final bool hasCredential;
   final VoidCallback onTap;
-  final void Function(Offset anchorTopLeft, Size anchorSize) onMenu;
+  final void Function(Rect anchor) onMenu;
 
   void _menuAt(BuildContext buttonContext) {
     final box = buttonContext.findRenderObject()! as RenderBox;
-    onMenu(box.localToGlobal(Offset.zero), box.size);
+    onMenu(box.localToGlobal(Offset.zero) & box.size);
   }
 
   @override
   Widget build(BuildContext context) {
+    // 副标题 = user@host · 分组（ssh 前缀冗余，tooltip 兜底长全文，评审 P2）
     final subtitle = [
-      'ssh',
-      if (host.username.isNotEmpty) host.username,
+      host.username.isEmpty
+          ? host.hostname
+          : '${host.username}@${host.hostname}',
       if (groupName != null) groupName,
-    ].join(', ');
+    ].join(' · ');
     return _Card(
       onTap: onTap,
-      onSecondaryTapUp: (d) => _menuAt(context),
+      // 右键菜单锚在光标处（评审 P1：旧实现锚整卡，点哪都弹同一个位置）
+      onSecondaryTapUp: (d) => onMenu(
+          Rect.fromLTWH(d.globalPosition.dx, d.globalPosition.dy, 150, 1)),
       onLongPress: () => _menuAt(context),
       child: Row(
         children: [
@@ -815,22 +856,29 @@ class _HostCard extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                         color: Et.textPrimary)),
                 const SizedBox(height: 3),
-                Text(hasCredential ? subtitle : '$subtitle · 无凭据',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12.5,
-                        color: hasCredential
-                            ? Et.textSecondary
-                            : const Color(0xFFC77B27))),
+                Tooltip(
+                  message: hasCredential ? subtitle : '$subtitle · 无凭据',
+                  waitDuration: const Duration(milliseconds: 450),
+                  child: Text(hasCredential ? subtitle : '$subtitle · 无凭据',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          color: hasCredential
+                              ? Et.textSecondary
+                              : const Color(0xFFC77B27))),
+                ),
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.more_horiz,
-                size: 18, color: Et.textSecondary),
-            tooltip: '操作',
-            onPressed: () => _menuAt(context),
+          Builder(
+            builder: (btnCtx) => IconButton(
+              icon: Icon(Icons.more_horiz,
+                  size: 18, color: Et.textSecondary),
+              tooltip: '操作',
+              // 菜单锚定按钮框（旧实现锚整卡底部，右列贴屏溢出）
+              onPressed: () => _menuAt(btnCtx),
+            ),
           ),
         ],
       ),
@@ -893,13 +941,13 @@ class _MobileTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
-  final void Function(Offset anchorTopLeft, Size anchorSize)? onMenu;
+  final void Function(Rect anchor)? onMenu;
   final bool danger; // 无凭据橙色副标题
   final bool open; // 已开终端绿点
 
   void _menuAt(BuildContext buttonContext) {
     final box = buttonContext.findRenderObject()! as RenderBox;
-    onMenu?.call(box.localToGlobal(Offset.zero), box.size);
+    onMenu?.call(box.localToGlobal(Offset.zero) & box.size);
   }
 
   @override

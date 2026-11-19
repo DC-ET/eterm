@@ -14,6 +14,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class KeychainPage extends StatefulWidget {
   const KeychainPage({super.key, required this.app});
@@ -163,6 +164,15 @@ class _KeychainPageState extends State<KeychainPage> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (!compact)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                  child: Text('Keychain',
+                      style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                          color: Et.textPrimary)),
+                ),
               // 说明条（桌面附带工具栏按钮；手机仅说明）
               Padding(
                 padding: EdgeInsets.fromLTRB(
@@ -411,7 +421,7 @@ class _SectionToggle extends StatelessWidget {
       height: 34,
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF1F4),
+        color: Et.surfaceMuted,
         borderRadius: BorderRadius.circular(9),
       ),
       child: Row(
@@ -532,7 +542,7 @@ class _IdentityCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F2F5),
+                  color: Et.surfaceMuted,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(item.authKindText,
@@ -547,7 +557,12 @@ class _IdentityCard extends StatelessWidget {
                   onPressed: onDelete,
                 )
               else
-                const SizedBox(width: 44), // 与删除按钮等宽占位，卡片对齐
+                // 被引用：禁用删除并给出原因（评审 P1：此前无入口无解释）
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  tooltip: '被 ${item.usedBy.length} 台主机使用，先解除引用后可删除',
+                  onPressed: null,
+                ),
             ],
           ),
         ),
@@ -821,14 +836,15 @@ class _KeyCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // 类型徽标
+              // 类型徽标（旧导入数据 keyType 固为 'imported-pem'，展示为「已导入」）
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F2F5),
+                  color: Et.surfaceMuted,
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(item.keyType,
+                child: Text(
+                    item.keyType == 'imported-pem' ? '已导入' : item.keyType,
                     style: TextStyle(
                         fontSize: 11, color: Et.textSecondary)),
               ),
@@ -840,7 +856,12 @@ class _KeyCard extends StatelessWidget {
                   onPressed: onDelete,
                 )
               else
-                const SizedBox(width: 44), // 与删除按钮等宽占位，卡片对齐
+                // 被引用：禁用删除并给出原因（评审 P1：此前无入口无解释）
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  tooltip: '被 ${item.usedBy.length} 台主机使用，先解除引用后可删除',
+                  onPressed: null,
+                ),
             ],
           ),
         ),
@@ -887,7 +908,8 @@ class _DialogShell extends StatelessWidget {
           style: TextStyle(
               fontSize: 18, fontWeight: FontWeight.w700, color: Et.textPrimary)),
       content: SizedBox(
-        width: width,
+        // 期望宽与可用宽取小：手机窄屏（360dp）不溢出（评审 P0）
+        width: dialogWidth(width, context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1413,10 +1435,10 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F2F5),
+                color: Et.surfaceMuted,
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Text(k.keyType,
+              child: Text(k.keyType == 'imported-pem' ? '已导入' : k.keyType,
                   style:
                       TextStyle(fontSize: 11, color: Et.textSecondary)),
             ),
@@ -1443,7 +1465,7 @@ class _KeyDetailDialogState extends State<_KeyDetailDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F8FA),
+        color: Et.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Et.cardBorder),
       ),

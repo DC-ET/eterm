@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class AddHostDialog extends StatefulWidget {
   const AddHostDialog({super.key, required this.app}) : editHost = null;
@@ -145,7 +146,8 @@ class _AddHostDialogState extends State<AddHostDialog> {
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
       content: SizedBox(
-        width: 440,
+        // 手机窄屏（360dp）不溢出：期望宽与可用宽取小（评审 P0）
+        width: dialogWidth(440, context),
         child: SingleChildScrollView(
           child: Form(
             key: _form,
@@ -331,7 +333,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
             height: 40,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: sel ? Et.primaryBtn : const Color(0xFFF1F2F5),
+              color: sel ? Et.primaryBtn : Et.surfaceMuted,
               borderRadius: radius,
             ),
             child: Text(label,
@@ -365,7 +367,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
             height: 34,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: sel ? Et.primaryBtn : const Color(0xFFF1F2F5),
+              color: sel ? Et.primaryBtn : Et.surfaceMuted,
               borderRadius: radius,
             ),
             child: Text(label,

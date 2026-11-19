@@ -12,6 +12,7 @@ import '../services/realtime.dart';
 import '../services/app_state.dart';
 import 'shell.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -89,7 +90,9 @@ class _LoginPageState extends State<LoginPage> {
       body: SafeArea(
         child: Center(
         child: Container(
-          width: 400,
+          // 手机窄屏不溢出（评审 P0：固定 400 在 360dp 超出可用宽）
+          width: dialogWidth(400, context),
+          margin: const EdgeInsets.symmetric(horizontal: 12),
           padding: const EdgeInsets.all(34),
           decoration: BoxDecoration(
             color: Et.card,
@@ -131,6 +134,7 @@ class _LoginPageState extends State<LoginPage> {
                         TextStyle(fontSize: 13, color: Et.textSecondary)),
                 const SizedBox(height: 26),
                 _field(_server, '服务器地址',
+                    textInputAction: TextInputAction.next,
                     validator: (v) {
                       final parsed = Uri.tryParse(v?.trim() ?? '');
                       if (parsed == null ||
@@ -141,12 +145,16 @@ class _LoginPageState extends State<LoginPage> {
                       return null;
                     }),
                 const SizedBox(height: 14),
-                _field(_username, '用户名'),
+                _field(_username, '用户名',
+                    textInputAction: TextInputAction.next),
                 const SizedBox(height: 14),
                 _field(
                   _password,
                   '密码',
                   obscure: !_passwordVisible,
+                  // 回车直接提交（评审 P1：此前桌面键盘无提交链）
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _submit(),
                   suffix: IconButton(
                     icon: Icon(
                         _passwordVisible
@@ -199,11 +207,15 @@ class _LoginPageState extends State<LoginPage> {
     bool obscure = false,
     String? Function(String?)? validator,
     Widget? suffix,
+    TextInputAction? textInputAction,
+    void Function(String)? onSubmitted,
   }) =>
       TextFormField(
         controller: c,
         obscureText: obscure,
         autocorrect: false,
+        textInputAction: textInputAction,
+        onFieldSubmitted: onSubmitted,
         validator: validator ?? (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
         style: TextStyle(fontSize: 14, color: Et.textPrimary),
         decoration: InputDecoration(

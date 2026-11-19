@@ -32,6 +32,8 @@ class AppPalette {
     required this.primaryBtnText,
     required this.accent,
     required this.danger,
+    required this.surfaceMuted,
+    required this.disabledBtn,
     required this.mBg,
     required this.mSelected,
     required this.mFab,
@@ -70,6 +72,10 @@ class AppPalette {
   final Color accent;
   final Color danger;
 
+  // 弱表面（分段控件底/徽标底/kv 行底）与禁用按钮底（深浅各自成套，禁硬编码）
+  final Color surfaceMuted;
+  final Color disabledBtn;
+
   // 移动端
   final Color mBg;
   final Color mSelected;
@@ -103,6 +109,8 @@ const kLightPalette = AppPalette(
   primaryBtnText: Color(0xFFFFFFFF),
   accent: Color(0xFF2F6D5C),
   danger: Color(0xFFC73E33),
+  surfaceMuted: Color(0xFFF1F2F5),
+  disabledBtn: Color(0xFFC9CBD3),
   mBg: Color(0xFFF2F3F6),
   mSelected: Color(0xFFD8E1DE),
   mFab: Color(0xFF232A36),
@@ -131,6 +139,8 @@ const kDarkPalette = AppPalette(
   primaryBtnText: Color(0xFFF2F3F6),
   accent: Color(0xFF3F8B78),
   danger: Color(0xFFD45A4E),
+  surfaceMuted: Color(0xFF262D38),
+  disabledBtn: Color(0xFF39414E),
   mBg: Color(0xFF15181E),
   mSelected: Color(0xFF28323A),
   mFab: Color(0xFFE3E6EC),
@@ -161,6 +171,8 @@ abstract final class Et {
   static Color get primaryBtnText => palette.primaryBtnText;
   static Color get accent => palette.accent;
   static Color get danger => palette.danger;
+  static Color get surfaceMuted => palette.surfaceMuted;
+  static Color get disabledBtn => palette.disabledBtn;
   static Color get mBg => palette.mBg;
   static Color get mSelected => palette.mSelected;
   static Color get mFab => palette.mFab;

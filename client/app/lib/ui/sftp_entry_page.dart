@@ -62,11 +62,22 @@ class _SftpEntryPageState extends State<SftpEntryPage> {
                 Expanded(
                     child: _slot(context, _left, '源端', Icons.upload_outlined,
                         () => _pick(0, hosts))),
+                // 交换按钮（评审 P1：此前是死图标）
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Center(
-                    child: Icon(Icons.swap_horiz,
-                        size: 24, color: Et.textSecondary),
+                    child: IconButton(
+                      onPressed: (_left == null && _right == null)
+                          ? null
+                          : () => setState(() {
+                                final t = _left;
+                                _left = _right;
+                                _right = t;
+                              }),
+                      tooltip: '交换源端与目标端',
+                      icon: Icon(Icons.swap_horiz,
+                          size: 24, color: Et.textSecondary),
+                    ),
                   ),
                 ),
                 Expanded(
@@ -75,7 +86,15 @@ class _SftpEntryPageState extends State<SftpEntryPage> {
               ],
             ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+            // 禁用给原因（评审 P1：此前「打开 SFTP」灰着无解释）
+            if (!_canStart)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text('两侧都是本机：至少一侧选择一台服务器才能开始传输',
+                    style: TextStyle(
+                        fontSize: 12.5, color: Et.textSecondary)),
+              ),
             FilledButton.icon(
               onPressed: _canStart ? _start : null,
               icon: const Icon(Icons.folder_open, size: 18),

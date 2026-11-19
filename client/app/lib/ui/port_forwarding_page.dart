@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class PortForwardingPage extends StatefulWidget {
   const PortForwardingPage({super.key, required this.app});
@@ -44,6 +45,10 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
 
   Future<void> _start(PortRuleView r) async {
     if (_busy.contains(r.id) || _forwards.containsKey(r.id)) return;
+    if (!r.enabled) {
+      _err('规则已停用，编辑规则并勾选「启用规则」后再启动');
+      return;
+    }
     final host = _hostOf(r);
     if (host == null) {
       _err('找不到规则对应的主机（可能已删除）');
@@ -188,6 +193,15 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (!compact)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                  child: Text('Port Forwarding',
+                      style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                          color: Et.textPrimary)),
+                ),
               Padding(
                 padding: EdgeInsets.fromLTRB(
                     compact ? 14 : 20, 14, compact ? 14 : 20, 8),
@@ -207,6 +221,22 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
                             color: Et.textSecondary),
                       ),
                     ),
+                    // 桌面：头部按钮（与 Keychain 同范式）；手机走 FAB（评审 P2）
+                    if (!compact) ...[
+                      const SizedBox(width: 12),
+                      FilledButton.icon(
+                        onPressed: _showEditor,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('新建规则'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Et.primaryBtn,
+                          foregroundColor: Et.primaryBtnText,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(9)),
+                          minimumSize: const Size(0, 38),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -244,18 +274,20 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
               ),
             ],
           ),
-          Positioned(
-            right: compact ? 18 : 24,
-            bottom: compact ? 18 : 24,
-            child: FloatingActionButton(
-              heroTag: 'pf-add',
-              backgroundColor: Et.primaryBtn,
-              foregroundColor: Et.primaryBtnText,
-              elevation: 2,
-              onPressed: _showEditor,
-              child: const Icon(Icons.add, size: 26),
+          // 手机：FAB 新建（桌面已收敛到头部按钮，与 Keychain 一致）
+          if (compact)
+            Positioned(
+              right: 18,
+              bottom: 18,
+              child: FloatingActionButton(
+                heroTag: 'pf-add',
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Et.primaryBtnText,
+                elevation: 2,
+                onPressed: _showEditor,
+                child: const Icon(Icons.add, size: 26),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -285,6 +317,20 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
             const SizedBox(height: 5),
             Text('新建一条 -L 规则，把内网服务映射到本机端口',
                 style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+            const SizedBox(height: 14),
+            // 空态直接给 CTA（评审 P2：此前手机端空态无可见入口）
+            FilledButton.icon(
+              onPressed: _showEditor,
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('新建规则'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Et.primaryBtnText,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9)),
+                minimumSize: const Size(0, 38),
+              ),
+            ),
           ],
         ),
       );
@@ -355,10 +401,24 @@ class _RuleCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF1F2F5),
+                            color: Et.surfaceMuted,
                             borderRadius: BorderRadius.circular(5),
                           ),
                           child: Text('暂不支持启动',
+                              style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: Et.textSecondary)),
+                        ),
+                      // 幽灵开关修复：enabled=false 之前无任何可见状态（评审 P1）
+                      if (supported && !rule.enabled)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Et.surfaceMuted,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text('已停用',
                               style: TextStyle(
                                   fontSize: 10.5,
                                   color: Et.textSecondary)),
@@ -380,7 +440,7 @@ class _RuleCard extends StatelessWidget {
               SizedBox(
                 height: 32,
                 child: FilledButton.tonal(
-                  onPressed: !supported || busy
+                  onPressed: !supported || !rule.enabled || busy
                       ? null
                       : (running ? onStop : onStart),
                   style: FilledButton.styleFrom(
@@ -525,7 +585,7 @@ class _RuleDialogState extends State<_RuleDialog> {
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
       content: SizedBox(
-        width: 420,
+        width: dialogWidth(420, context),
         child: Form(
           key: _formKey,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -606,6 +666,8 @@ class _RuleDialogState extends State<_RuleDialog> {
               onChanged: (v) => setState(() => _enabled = v),
               title: Text('启用规则',
                   style: TextStyle(fontSize: 14, color: Et.textPrimary)),
+              subtitle: Text('停用后卡片会标记「已停用」且无法启动',
+                  style: TextStyle(fontSize: 12, color: Et.textSecondary)),
             ),
             if (_error != null)
               Padding(

@@ -2,13 +2,17 @@
 // 终端字号、辅助键条重排、关于。主题切换经 ThemeController（全局重建，Et 令牌 +
 // Material 同源）；字号即改即存。登录信息不再放侧栏/标题栏，统一收敛在此。
 
+import 'dart:io' show Platform;
+
 import 'package:material_ui/material_ui.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'terminal_gestures.dart';
 import 'terminal_tab.dart';
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({
@@ -27,6 +31,21 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  String _version = ''; // pubspec version（关于卡展示）
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = info.version);
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     Theme.of(context); // 主题切换时随 inherited 重建（Et 静态令牌不感知）
@@ -113,13 +132,16 @@ class _SettingsPageState extends State<SettingsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _FontSizeSlider(),
-              Divider(height: 24, color: Et.cardBorder),
-              _navRow(
-                icon: Icons.swap_vert,
-                title: '重排辅助键条',
-                subtitle: '自定义终端键条按键顺序',
-                onTap: () => showExtraKeysOrderSheet(context),
-              ),
+              // 辅助键条重排是触屏功能：桌面隐藏（评审 P2）
+              if (Platform.isAndroid) ...[
+                Divider(height: 24, color: Et.cardBorder),
+                _navRow(
+                  icon: Icons.swap_vert,
+                  title: '重排辅助键条',
+                  subtitle: '自定义终端键条按键顺序',
+                  onTap: () => showExtraKeysOrderSheet(context),
+                ),
+              ],
             ],
           ),
         ),
@@ -138,7 +160,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('eterm',
+                    Text(_version.isEmpty ? 'eterm' : 'eterm v$_version',
                         style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
@@ -349,7 +371,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
               fontWeight: FontWeight.w700,
               color: Et.textPrimary)),
       content: SizedBox(
-        width: 320,
+        width: dialogWidth(320, context),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -545,8 +567,10 @@ class _FontSizeSlider extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Text('双指捏合终端画面也可调整；所有终端标签即时生效。',
-                style: TextStyle(fontSize: 12, color: Et.textSecondary)),
+            // 捏合是触屏手势，桌面不显示（评审 P2）
+            if (Platform.isAndroid)
+              Text('双指捏合终端画面也可调整；所有终端标签即时生效。',
+                  style: TextStyle(fontSize: 12, color: Et.textSecondary)),
           ],
         );
       },

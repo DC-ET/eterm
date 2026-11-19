@@ -6,6 +6,7 @@ import 'package:eterm/src/rust/store.dart' as store;
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'ui_utils.dart';
 
 class LogsPage extends StatefulWidget {
   const LogsPage({super.key});
@@ -86,6 +87,15 @@ class _LogsPageState extends State<LogsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (!compact)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              child: Text('Logs',
+                  style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w700,
+                      color: Et.textPrimary)),
+            ),
           // 说明 + 清空
           Padding(
             padding: EdgeInsets.fromLTRB(
@@ -197,22 +207,25 @@ class _EventCard extends StatelessWidget {
         return (Icons.delete_outline, Et.danger, '删除主机');
       case 'key_delete':
         return (Icons.key_off, Et.danger, '删除密钥');
+      // 评审 P1：补齐此前直接显示英文 kind 的 6 类事件
+      case 'key_edit':
+        return (Icons.edit_outlined, Et.tileGroup, '改密钥名');
+      case 'key_import':
+        return (Icons.download, Et.tileGroup, '导入密钥');
+      case 'key_generate':
+        return (Icons.auto_awesome, Et.tileGroup, '生成密钥');
+      case 'key_deploy':
+        return (Icons.upload, Et.tileGroup, '部署公钥');
+      case 'identity_edit':
+        return (Icons.badge_outlined, Et.tileGroup, '编辑凭据');
+      case 'identity_delete':
+        return (Icons.badge_outlined, Et.danger, '删除凭据');
     }
     return (Icons.circle, Et.textSecondary, item.kind);
   }
 
-  /// UTC → 本地显示（HH:mm:ss，日期变化才带日期）
-  String get _timeText {
-    try {
-      final t = DateTime.parse(item.ts).toLocal();
-      final hh = t.hour.toString().padLeft(2, '0');
-      final mm = t.minute.toString().padLeft(2, '0');
-      final ss = t.second.toString().padLeft(2, '0');
-      return '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')} $hh:$mm:$ss';
-    } catch (_) {
-      return item.ts;
-    }
-  }
+  /// UTC → 本地显示（与 Known Hosts 同源 fmtLocalTime）
+  String get _timeText => fmtLocalTime(item.ts);
 
   @override
   Widget build(BuildContext context) {
@@ -233,7 +246,7 @@ class _EventCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F2F5),
+                color: Et.surfaceMuted,
                 borderRadius: BorderRadius.circular(5),
               ),
               child: Text(label,

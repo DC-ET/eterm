@@ -7,10 +7,13 @@ import 'dart:io';
 
 import 'package:eterm/services/sftp_transfer_queue.dart';
 import 'package:eterm/src/rust/api/sftp.dart' as sftp;
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'terminal_gestures.dart'; // TerminalPrefs（编辑器字号跟随终端偏好）
 import 'theme.dart';
+import 'ui_utils.dart';
 
 /// 文本编辑大小上限（字节）：TextField 内存态全量编辑的现实边界。
 const _kMaxEditBytes = 2 * 1024 * 1024;
@@ -212,6 +215,8 @@ class _SftpEditPageState extends State<SftpEditPage> {
   @override
   Widget build(BuildContext context) {
     Theme.of(context); // 主题切换时随 inherited 重建
+    final compact = MediaQuery.sizeOf(context).width < 720;
+    final macGap = !compact && Platform.isMacOS;
     return PopScope(
       canPop: !_dirty || _phase != _EditPhase.editing,
       onPopInvokedWithResult: (didPop, _) async {
@@ -253,6 +258,15 @@ class _SftpEditPageState extends State<SftpEditPage> {
       child: Scaffold(
         backgroundColor: Et.contentBg,
         appBar: AppBar(
+          // macOS 隐藏标题栏窗口：leading 让位交通灯（+48 保证 BackButton
+          // 完整命中区，与 SFTP 双栏页同源）
+          leadingWidth: macGap ? kMacTitleBarInset + 48 : null,
+          leading: macGap
+              ? const Padding(
+                  padding: EdgeInsets.only(left: kMacTitleBarInset),
+                  child: BackButton(),
+                )
+              : null,
           backgroundColor: Et.card,
           surfaceTintColor: Et.card,
           elevation: 0.5,
@@ -311,19 +325,35 @@ class _SftpEditPageState extends State<SftpEditPage> {
                   border: Border.all(color: Et.cardBorder),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: TextField(
-                  controller: _ctrl,
-                  onChanged: (_) {
-                    if (!_dirty) setState(() => _dirty = true);
+                // 桌面快捷键：Cmd/Ctrl+S 保存（评审 P1）
+                child: CallbackShortcuts(
+                  bindings: {
+                    SingleActivator(LogicalKeyboardKey.keyS,
+                            meta: Platform.isMacOS,
+                            control: !Platform.isMacOS):
+                        _save,
                   },
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(
-                      fontFamily: 'Menlo', fontSize: 13, height: 1.5),
-                  decoration: const InputDecoration(
-                    border: InputBorder.none,
-                    hintText: '文件内容为空',
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: TerminalPrefs.fontSize,
+                    builder: (context, fontSize, _) => TextField(
+                      controller: _ctrl,
+                      onChanged: (_) {
+                        if (!_dirty) setState(() => _dirty = true);
+                      },
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      // 字号跟随终端偏好（评审 P2：此前硬编码 13 不随设置；
+                      // TerminalPrefs 已由设置页滑杆约束范围）
+                      style: TextStyle(
+                          fontFamily: 'Menlo',
+                          fontSize: fontSize,
+                          height: 1.5),
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        hintText: '文件内容为空',
+                      ),
+                    ),
                   ),
                 ),
               ),
