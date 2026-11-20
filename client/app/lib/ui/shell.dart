@@ -659,7 +659,7 @@ class _Sidebar extends StatelessWidget {
                       width: 24, height: 24, fit: BoxFit.cover),
                 ),
                 const SizedBox(width: 9),
-                Text('eterm',
+                Text('Eterm',
                     style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w700,
@@ -706,7 +706,7 @@ class _Sidebar extends StatelessWidget {
           const Spacer(),
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Text('eterm',
+            child: Text('Eterm',
                 style: TextStyle(
                     fontSize: 11.5, color: Et.textSecondary)),
           ),

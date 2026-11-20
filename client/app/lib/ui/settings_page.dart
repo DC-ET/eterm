@@ -160,7 +160,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(_version.isEmpty ? 'eterm' : 'eterm v$_version',
+                    Text(_version.isEmpty ? 'Eterm' : 'Eterm v$_version',
                         style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,

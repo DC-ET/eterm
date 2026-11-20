@@ -120,7 +120,7 @@ class _LoginPageState extends State<LoginPage> {
                           width: 46, height: 46, fit: BoxFit.cover),
                     ),
                     const SizedBox(width: 12),
-                    Text('eterm',
+                    Text('Eterm',
                         style: TextStyle(
                             fontSize: 25,
                             fontWeight: FontWeight.w800,

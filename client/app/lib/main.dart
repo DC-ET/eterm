@@ -51,7 +51,7 @@ class EtermApp extends StatelessWidget {
       listenable: ThemeController.instance,
       builder: (context, _) {
         return MaterialApp(
-          title: 'eterm',
+          title: 'Eterm',
           debugShowCheckedModeBanner: false,
           theme: buildM3Theme(kLightPalette),
           darkTheme: buildM3Theme(kDarkPalette),
@@ -156,7 +156,7 @@ class _BootState extends State<_Boot> {
                   width: 72, height: 72, fit: BoxFit.cover),
             ),
             const SizedBox(height: 14),
-            Text('eterm',
+            Text('Eterm',
                 style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.w800,
