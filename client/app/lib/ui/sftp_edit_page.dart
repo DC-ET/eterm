@@ -349,8 +349,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
                           fontFamily: 'Menlo',
                           fontSize: fontSize,
                           height: 1.5),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
+                      decoration: Et.borderlessField.copyWith(
                         hintText: '文件内容为空',
                       ),
                     ),

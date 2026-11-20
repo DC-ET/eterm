@@ -179,6 +179,19 @@ abstract final class Et {
   static Color get mFabIcon => palette.mFabIcon;
   static Brightness get brightness => palette.brightness;
   static TerminalTheme get termTheme => palette.terminal;
+
+  /// 无边框输入装饰：外层容器已画圆角边框（搜索框等）时使用。
+  /// ⚠️ 只写 `border: InputBorder.none` 不够——`InputDecoration.applyDefaults`
+  /// 会用 `inputDecorationTheme` 的 enabledBorder/focusedBorder 补位，
+  /// TextField 会在容器里再画一层内框（框中框，已踩坑）。各状态边框必须全部显式置 none。
+  static const borderlessField = InputDecoration(
+    border: InputBorder.none,
+    enabledBorder: InputBorder.none,
+    focusedBorder: InputBorder.none,
+    disabledBorder: InputBorder.none,
+    errorBorder: InputBorder.none,
+    focusedErrorBorder: InputBorder.none,
+  );
 }
 
 /// 浅色终端配色（ANSI 全套，纸面终端）。

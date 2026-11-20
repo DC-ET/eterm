@@ -32,6 +32,7 @@ class _HostsPageState extends State<HostsPage> {
   final _search = TextEditingController();
   String? _groupFilter; // null = 全部
   bool _showSearch = false; // 手机 app bar 搜索展开
+  bool _searchFocused = false; // 搜索框聚焦 → 外框换强调色
 
   @override
   void initState() {
@@ -209,44 +210,54 @@ class _HostsPageState extends State<HostsPage> {
               Row(
                 children: [
                   Expanded(
-                    child: Container(
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Et.card,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Et.cardBorder),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
-                        children: [
-                          Icon(Icons.search,
-                              size: 18, color: Et.textSecondary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _search,
-                              style: TextStyle(
-                                  fontSize: 13.5, color: Et.textPrimary),
-                              // 回车：唯一匹配直接连接
-                              onSubmitted: (_) =>
-                                  exact == null ? null : _connect(exact),
-                              decoration: const InputDecoration(
-                                hintText: '查找主机或 user@hostname…（回车连接唯一匹配）',
-                                border: InputBorder.none,
-                                isDense: true,
+                    child: Focus(
+                      // canRequestFocus:false → 点空白处不会把焦点吸到包装节点，
+                      // 只让 TextField 聚焦；onFocusChange 仍会经祖先链收到通知
+                      canRequestFocus: false,
+                      skipTraversal: true,
+                      onFocusChange: (v) =>
+                          setState(() => _searchFocused = v),
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Et.card,
+                          borderRadius: BorderRadius.circular(10),
+                          // 单层边框：内层 TextField 边框全部置 none（见
+                          // Et.borderlessField），否则主题 enabledBorder 会补位成框中框
+                          border: Border.all(
+                              color: _searchFocused ? Et.accent : Et.cardBorder),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            Icon(Icons.search,
+                                size: 18, color: Et.textSecondary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: _search,
+                                style: TextStyle(
+                                    fontSize: 13.5, color: Et.textPrimary),
+                                // 回车：唯一匹配直接连接
+                                onSubmitted: (_) =>
+                                    exact == null ? null : _connect(exact),
+                                decoration: Et.borderlessField.copyWith(
+                                  hintText: '查找主机或 user@hostname…（回车连接唯一匹配）',
+                                  isDense: true,
+                                ),
                               ),
                             ),
-                          ),
-                          if (_search.text.isNotEmpty)
-                            InkWell(
-                              onTap: () {
-                                _search.clear();
-                                setState(() => _groupFilter = null);
-                              },
-                              child: Icon(Icons.close,
-                                  size: 16, color: Et.textSecondary),
-                            ),
-                        ],
+                            if (_search.text.isNotEmpty)
+                              InkWell(
+                                onTap: () {
+                                  _search.clear();
+                                  setState(() => _groupFilter = null);
+                                },
+                                child: Icon(Icons.close,
+                                    size: 16, color: Et.textSecondary),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -430,9 +441,8 @@ class _HostsPageState extends State<HostsPage> {
                 autofocus: true,
                 style: TextStyle(fontSize: 14, color: Et.textPrimary),
                 onSubmitted: (_) => exact == null ? null : _connect(exact),
-                decoration: const InputDecoration(
+                decoration: Et.borderlessField.copyWith(
                   hintText: '查找主机…',
-                  border: InputBorder.none,
                   isDense: true,
                 ),
               ),
