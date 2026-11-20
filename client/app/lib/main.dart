@@ -116,7 +116,8 @@ class _BootState extends State<_Boot> {
     }
     final api = ApiClient(baseUrl: sess[0])..token = sess[1];
     final app = AppState(api: api);
-    realtime.start(sess[0], sess[1], poke: app.refresh); // WS 实时同步
+    realtime.start(sess[0], sess[1],
+        poke: () => app.refresh(silent: true)); // WS 实时同步（后台对账，不闪加载条）
     await app.bootstrap(); // 本地快照（离线可见）
     var username = sess.length >= 3 && sess[2].isNotEmpty ? sess[2] : '';
     try {

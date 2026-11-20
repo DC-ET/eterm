@@ -152,6 +152,9 @@ class AppState extends ChangeNotifier {
   Map<String, Map<String, dynamic>> _entities = {};
   bool loading = false;
   String? error; // 'unauthorized' 会触发壳层回登录页
+  /// 本会话是否已完成过一次同步：冷启动首屏要"同步中"指示，之后的增量同步
+  /// （切页回来、WS 推送对账）一律静默，避免闪加载条。
+  bool syncedOnce = false;
 
   /// 启动引导：从本地库快照加载（离线可见），随后可调 refresh() 增量同步。
   Future<void> bootstrap() async {
@@ -685,14 +688,19 @@ class AppState extends ChangeNotifier {
   }
 
   /// 增量同步：从本地库游标拉取变更 → 折叠进本地库 → 重建视图。
-  Future<void> refresh() async {
-    loading = true;
+  /// [silent] = true 时不翻 [loading]（顶部加载条与页面级"同步中…"都不出现），
+  /// 用于切页回来、WS 推送对账等后台场景——用户已经在看内容，别再闪一下。
+  /// 静默同步失败仍要走 finally 派发，让失败横幅正常显示。
+  Future<void> refresh({bool silent = false}) async {
     error = null;
-    // 首次状态派发让出当前事件循环再执行（评审"附加观察 1"）：调用方常在 build 栈内
-    // 触发 refresh（HostsPage.initState），同步 notifyListeners 会于首帧 build 期间
-    // markNeedsBuild（debug 断言 + 该帧 build 中断）。延迟后派发，状态下一帧生效。
-    await Future<void>.delayed(Duration.zero);
-    notifyListeners();
+    if (!silent) {
+      loading = true;
+      // 首次状态派发让出当前事件循环再执行（评审"附加观察 1"）：调用方常在 build 栈内
+      // 触发 refresh（HostsPage.initState），同步 notifyListeners 会于首帧 build 期间
+      // markNeedsBuild（debug 断言 + 该帧 build 中断）。延迟后派发，状态下一帧生效。
+      await Future<void>.delayed(Duration.zero);
+      notifyListeners();
+    }
     try {
       var cursor = local.storeCursor().toInt();
       while (true) {
@@ -713,7 +721,8 @@ class AppState extends ChangeNotifier {
       // 本地库 FFI 等非网络错误同样降级为同步失败横幅，不得逃逸成未处理异常
       error = '$e';
     } finally {
-      loading = false;
+      syncedOnce = true;
+      if (!silent) loading = false;
       notifyListeners();
     }
   }

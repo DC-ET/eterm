@@ -272,8 +272,14 @@ class _ShellPageState extends State<ShellPage> {
               onSelectTab: (i) => setState(() => activeTab = i),
               onCloseTab: closeTab,
             ),
-            if (widget.app.loading)
-              LinearProgressIndicator(minHeight: 2, color: Et.accent),
+            // 加载条常驻 2px 槽位：同步开始/结束只切换槽位内容，不插入/移除节点，
+            // 进度条出现时不会把下方内容顶下去（否则画面跟着抖一下）
+            SizedBox(
+              height: 2,
+              child: widget.app.loading
+                  ? LinearProgressIndicator(minHeight: 2, color: Et.accent)
+                  : null,
+            ),
           ],
           Expanded(child: body),
         ],

@@ -37,7 +37,11 @@ class _HostsPageState extends State<HostsPage> {
   @override
   void initState() {
     super.initState();
-    widget.app.refresh();
+    // 增量同步：本会话还没同步过（冷启动首屏）时保留"同步中"指示；
+    // 之后每次切回 Hosts 标签都静默对账。nav 内容槽只放一个页面，切页会把
+    // HostsPage 整个卸载重装，若这里每次都发非静默 refresh，顶部就会闪一下
+    // 浏览器式加载条，且 2px 进度条插槽把内容顶下去（画面跳一下）。
+    widget.app.refresh(silent: widget.app.syncedOnce);
     _search.addListener(() => setState(() {}));
   }
 
@@ -363,9 +367,14 @@ class _HostsPageState extends State<HostsPage> {
             children: [
               _mobileAppBar(context),
               if (_showSearch) _mobileSearch(),
-              if (widget.app.loading)
-                LinearProgressIndicator(
-                    minHeight: 2, color: Et.accent),
+              // 同桌面壳：2px 槽位常驻，进度条出现不顶动内容
+              SizedBox(
+                height: 2,
+                child: widget.app.loading
+                    ? LinearProgressIndicator(
+                        minHeight: 2, color: Et.accent)
+                    : null,
+              ),
               Expanded(child: content),
             ],
           ),
