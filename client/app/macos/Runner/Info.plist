@@ -34,7 +34,7 @@
 	<key>SUFeedURL</key>
 	<string>https://eterm.etarch.cn/updates/eterm-mac.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>__ETERM_SPARKLE_EDDSA_PUBLIC_KEY_NOT_SET__</string>
+	<string>IeFWpqeVQvO8N4WWgAyTfkDHv5DIe9JIkuyoAJzHKfY=</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 </dict>
