@@ -42,6 +42,29 @@ class TerminalTabView extends StatefulWidget {
 /// 终端会话阶段（shell 标签 pill 状态点共用此枚举）。
 enum TermPhase { connecting, live, closed }
 
+/// 活跃终端页注册表（D13③，方案 §4.2）：挂载登记、卸载注销，
+/// shell 生命周期 observer 经 [terminalTabsOnAppResume] / [terminalTabsOnAppPaused]
+/// 逐 tab 触达。
+final Set<_TerminalTabViewState> _activeTerminalTabs = {};
+
+/// 退后台登记（D13）：记录各 tab 挂起前的存活状态——仅「挂起时活着」的
+/// 会话参与回前台自动重连（用户 exit / 连接失败留下的 closed 不被反复拉起，
+/// review P2#6 语义边界）。
+void terminalTabsOnAppPaused() {
+  for (final s in _activeTerminalTabs) {
+    s._onAppPaused();
+  }
+}
+
+/// 回前台探测（D13）：挂起前存活的已断标签立即重连；存活标签开启 60s
+/// 自动重连窗口——挂起期间已死的会话在解冻后最长 ~45s（keepalive 15×3）
+/// 送达 Closed，窗口期内自动重连而非停在断线 UI（健康会话零打扰）。
+void terminalTabsOnAppResume() {
+  for (final s in _activeTerminalTabs) {
+    s._onAppResume();
+  }
+}
+
 /// 终端等宽字体（各平台原生等宽族；xterm 默认字体在 Android 偏模糊）
 final _monoFont = Platform.isWindows
     ? 'Consolas'
@@ -58,6 +81,9 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   TermPhase _phase = TermPhase.connecting;
   String? _reason;
   bool _ctrlArmed = false; // 辅助键条：Ctrl 粘滞（下一个可组合字符发送控制码）
+  DateTime? _autoReconnectUntil; // D13：回前台后的自动重连窗口（期间 Closed→自动重连）
+  bool _autoReconnected = false; // 本次重连由 D13 自动触发（成功后提示「已重连」）
+  bool _liveAtLastPause = false; // D13：最近一次退后台时会话是否存活（语义边界，见 terminalTabsOnAppPaused）
 
   // 移动手势状态（PRD F3.2）
   ArrowGestureTracker? _arrow; // 长按拖动方向键追踪器
@@ -69,6 +95,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
   @override
   void initState() {
     super.initState();
+    _activeTerminalTabs.add(this); // D13 注册表
     TerminalPrefs.load(); // 字号/键序偏好（幂等，多标签共享）
     _term.onOutput = _onOutput;
     _term.onResize = (width, height, _, _) {
@@ -83,6 +110,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
 
   @override
   void dispose() {
+    _activeTerminalTabs.remove(this); // D13 注册表
     _sub?.cancel(); // 先断事件流：Closed 事件不得在 dispose 后抵达
     final id = _sessionId;
     if (id != null && _phase != TermPhase.closed) {
@@ -145,6 +173,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     _sub = null;
     _setPhase(TermPhase.connecting);
     void fail(String reason) {
+      _autoReconnected = false; // 自动重连失败不提示「已重连」（D13）
       _pushBytes(utf8.encode('\r\n\x1b[31m[错误] $reason\x1b[0m\r\n'));
       try {
         // 评审 P1：此前 `$h.hostname` 少花括号，日志里插值成
@@ -171,6 +200,7 @@ class _TerminalTabViewState extends State<TerminalTabView> {
           case ssh.SshEvent_Data():
             if (_phase == TermPhase.connecting && mounted) {
               _setPhase(TermPhase.live);
+              _notifyReconnected(); // D13：自动重连成功提示
               try {
                 local.logEvent(kind: 'connect_ok', detail: '${widget.host.label}（${widget.host.hostname}）');
               } catch (_) {}
@@ -185,6 +215,8 @@ class _TerminalTabViewState extends State<TerminalTabView> {
                   detail: '${widget.host.label}（${widget.host.hostname}）: ${ev.reason}');
             } catch (_) {}
             _setPhase(TermPhase.closed, reason: ev.reason);
+            _autoReconnected = false; // 断开即失效：防后续手动重连弹假「已重连」（review P2#4）
+            _maybeAutoReconnect(); // D13：回前台窗口期内自动重连
         }
       }, onError: (Object e) {
         fail('FFI 错误: $e');
@@ -196,6 +228,50 @@ class _TerminalTabViewState extends State<TerminalTabView> {
     } catch (e) {
       fail('FFI 错误: $e');
     }
+  }
+
+  // ---------- D13 生命周期（方案 §4.2）：回前台探测与自动重连 ----------
+
+  /// 退后台登记：记录挂起前存活状态。
+  void _onAppPaused() {
+    if (!mounted) return;
+    _liveAtLastPause = _phase == TermPhase.live;
+  }
+
+  /// 回前台探测：挂起前存活的 closed → 立即重连（用户 exit / 连接失败
+  /// 留下的 closed 不拉起，语义边界见 [terminalTabsOnAppPaused]）；
+  /// live/connecting → 武装 60s 自动重连窗口（覆盖 keepalive 判死最长
+  /// ~45s 的延迟；进程未挂起的 resumed 场景下连接健康，窗口到期自动
+  /// 失效，零副作用）。
+  void _onAppResume() {
+    if (!mounted) return;
+    if (_phase == TermPhase.closed) {
+      if (!_liveAtLastPause) return;
+      _autoReconnected = true;
+      _connect();
+    } else {
+      _autoReconnectUntil = DateTime.now().add(const Duration(seconds: 60));
+    }
+  }
+
+  /// Closed 事件后若处于回前台重连窗口内，自动重连一次。窗口只消费一次：
+  /// 重连后若再断（服务器宕机等）停在断线 UI 交用户手动，防打桩循环。
+  void _maybeAutoReconnect() {
+    final until = _autoReconnectUntil;
+    if (until == null || DateTime.now().isAfter(until)) return;
+    _autoReconnectUntil = null;
+    _autoReconnected = true;
+    _connect();
+  }
+
+  /// D13：自动重连成功提示（本地回滚缓冲保留，仅 shell 状态丢失）。
+  /// 多 tab 同帧重连时替换而非排队，只弹一条（review P3）。
+  void _notifyReconnected() {
+    if (!_autoReconnected) return;
+    _autoReconnected = false;
+    ScaffoldMessenger.of(context)
+      ..removeCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('已重连')));
   }
 
   void _showKeyboard() {

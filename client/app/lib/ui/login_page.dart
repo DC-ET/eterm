@@ -51,7 +51,15 @@ class _LoginPageState extends State<LoginPage> {
       final result = await api.login(
         _username.text.trim(),
         _password.text,
-        deviceName: Platform.isMacOS ? 'eterm-mac' : 'eterm-mobile',
+        // 设备名分端（P10）：中枢设备管理页可辨识各端；
+        // 只影响新登录，存量 token 名不变（方案 §4.5）
+        deviceName: Platform.isMacOS
+            ? 'eterm-mac'
+            : Platform.isIOS
+                ? 'eterm-ios'
+                : Platform.isWindows
+                    ? 'eterm-windows'
+                    : 'eterm-android',
       );
       if (!mounted) return;
       // 会话持久化：token 密文落本地库（LKMK 钥匙串保护），重启免登录

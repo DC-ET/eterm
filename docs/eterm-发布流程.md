@@ -141,6 +141,32 @@ macos/Pods/Sparkle/bin/generate_keys -p                                     # �
 - [ ] `flutter analyze` / `flutter test` 全绿（mac 机本机跑）
 - [ ] `Eterm.app` 放 `/Applications` → 旧包升新包端到端（方案 §11.5：提示新版本 → 安装并重启 → 版本变新）
 
+## iOS 包（TestFlight）
+
+### 约定（2026-11-21 起，iOS 方案 D2/D9/D11）
+
+- **苹果托管分发**：IPA 上传 App Store Connect（TestFlight），**不经自有服务器**——无 nginx 覆盖上传、无元数据 JSON，三端共用的 `/updates/` 约定不适用
+- 硬前提：Apple Developer Program 付费账号（$99/年）。**个人账号的 ASC 团队只有账号持有者一人**（不能加成员），内部测试实际仅自己可用；给他人装走外部测试组（每 version 首个 build 需轻量 Beta 审核，通常 1 个工作日内）
+- build 号 per-version 单调（同 version 内递增、跨 version 可复用）：沿用三端 bump 不变式（干净工作区 + `git pull --ff-only` + bump + 上传成功后 commit+push）
+- 单个 TestFlight build 有效期 90 天；上传工具 `xcrun altool` + ASC API Key（`ETERM_ASC_API_KEY` / `ETERM_ASC_API_ISSUER`，.p8 落 `~/.appstoreconnect/private_keys/`）
+- iOS 不并入应用内更新体系（D5）：`app_update` 对 iOS 永久 no-op，更新体验由 TestFlight 承担
+
+### 一条命令发布
+
+```bash
+client/app/scripts/release_ios.sh        # bump → build ipa → altool 上传 TestFlight → commit+push bump
+client/app/scripts/release_ios.sh --no-upload   # 本地演练：--no-codesign 构建（免签名，只验证构建链）
+```
+
+- 上传工具探测**前置到 bump 之前**（altool 缺失直接拒绝，不产生孤儿 bump）；Xcode 26 若已移除 altool，兜底 Transporter.app 拖拽上传（方案核验项 #13 实测定型）
+- 上传受理成功 ≠ 测试者可见：内部测试处理几分钟~半小时；外部测试每 version 首传另需轻量 Beta 审核；处理完成的确认走 ASC 后台人工（一期不做 API 轮询）
+
+### 发布前自检清单
+
+- [ ] `flutter analyze` / `flutter test` / `cargo test --lib` 全绿（mac 机本机跑）
+- [ ] iOS 模拟器构建通过（`flutter build ios --simulator --debug`，cargokit 链路）
+- [ ] Xcode 已登录 Apple ID 且 ASC 最新协议已接受（未接受新协议是签名/上传的年度经典坑，报错晦涩）
+
 ## 更新分发基础设施（nginx `/updates/`，三端共用）
 
 - `deploy/nginx-eterm.etarch.cn.conf` 的 443 server 块把 `/updates/` alias 到

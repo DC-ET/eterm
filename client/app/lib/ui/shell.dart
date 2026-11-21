@@ -3,6 +3,7 @@
 // 窄屏（手机竖屏，<720）响应式：侧边导航换成底部导航栏，内容区满幅。
 // IndexedStack 保持后台终端标签的会话存活。
 
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
@@ -55,10 +56,12 @@ class _TerminalTab {
   final phase = ValueNotifier<TermPhase>(TermPhase.connecting);
 }
 
-class _ShellPageState extends State<ShellPage> {
+class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
   final tabs = <_TerminalTab>[];
   int activeTab = -1; // -1 = vault 视图；否则 tabs 下标
   int navIndex = 0; // 侧边导航（0=Hosts）
+  DateTime? _lastPausedAt; // D13 防抖：最近一次 paused
+  DateTime? _lastProbeAt; // D13 防抖：最近一次回前台探测
 
   void openTerminal(HostView h) {
     final cred = widget.app.credentialFor(h);
@@ -139,13 +142,41 @@ class _ShellPageState extends State<ShellPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // D13：回前台探测（移动端）
     widget.app.addListener(_appChanged);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.app.removeListener(_appChanged);
     super.dispose();
+  }
+
+  /// D13 生命周期（方案 §4.2）：回前台探测。桌面不参与——macOS 每次窗口
+  /// 聚焦都触发 resumed（纯噪声）；Android 无前台服务挂起时同样受益
+  /// （iOS 驱动、双端一致的改动）。paused 无动作（D4：不保活）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _lastPausedAt = DateTime.now();
+      terminalTabsOnAppPaused(); // 登记 tab 挂起前存活状态（exit/失败的 closed 不参与自动重连）
+      return;
+    }
+    if (state != AppLifecycleState.resumed) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    // 防抖：仅对「刚从 paused 恢复」或距上次探测 >10s 才执行，
+    // 过滤 iOS 上拉通知中心 / 滑过 App 切换器产生的 inactive→resumed 抖动
+    final now = DateTime.now();
+    final fromPaused = _lastPausedAt != null &&
+        now.difference(_lastPausedAt!) <= const Duration(seconds: 3);
+    final sinceProbe = _lastProbeAt == null ||
+        now.difference(_lastProbeAt!) > const Duration(seconds: 10);
+    if (!fromPaused && !sinceProbe) return;
+    _lastProbeAt = now;
+    realtime.probe(); // ① WS 断则立即重连（不等退避）
+    unawaited(widget.app.refresh(silent: true)); // ② 静默对账
+    terminalTabsOnAppResume(); // ③ 终端标签逐个重连/武装窗口
   }
 
   void _appChanged() {

@@ -69,6 +69,33 @@ class Realtime {
     }
   }
 
+  /// 回前台探测（D13①，方案 §4.2）：挂起归来后本地状态陈旧——socket 实际
+  /// 已死时 onDone/onError 要到解冻后才送达，正常路径会吃满累积退避（≤60s）。
+  /// 本探测不等退避：看着已断（无连接/已收到关闭）立即重连；看着存活则
+  /// 清零退避，让解冻后随即到达的 onDone 在 1s 内完成重连。
+  ///
+  /// 实现偏离说明（review P2#5）：方案要求「发一条真实网络动作判活」，此处
+  /// 为被动判活（查连接状态 + 清退避）——主动 WS 文本探测有协议风险（中枢
+  /// 对未知消息帧的行为未约定，可能被当协议错误断链），伴随的 app.refresh
+  /// 走独立 HTTP 连接对 WS 死活无信号。半开 socket 场景依赖解冻后事件送达
+  /// + 清零后的快速重连兜底，真机核验项 #10 验证。
+  void probe() {
+    if (_stopped) return;
+    _retry?.cancel();
+    _retry = null;
+    _backoff = 0;
+    final ws = _ws;
+    if (ws == null || ws.closeCode != null) {
+      _sub?.cancel();
+      _sub = null;
+      _ws = null;
+      try {
+        ws?.sink.close(); // 已关闭的 channel 也显式断 sink（review P3 卫生）
+      } catch (_) {}
+      _connect();
+    }
+  }
+
   /// 连续多条变更合并：800ms 内只拉一次。
   void _poke() {
     _debounce?.cancel();

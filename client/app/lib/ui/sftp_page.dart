@@ -218,12 +218,15 @@ class _SftpDualPageState extends State<SftpDualPage> {
       (s.rentries ?? const []).map((e) => e.name).toSet();
 
   Future<void> _initLocal(_Side s) async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       try {
-        // Android：应用专属外部目录（免权限、系统文件管理器可见）
-        final ext = await getExternalStorageDirectory();
-        final base =
-            ext?.path ?? (await getApplicationDocumentsDirectory()).path;
+        // Android：应用专属外部目录（免权限、系统文件管理器可见）；
+        // iOS：应用沙箱 Documents（免权限、经 UIFileSharingEnabled 对
+        // 「文件」App 与 Finder 可见）——两端同构落盘（方案 §4.4 / D6）
+        final base = Platform.isAndroid
+            ? (await getExternalStorageDirectory())?.path ??
+                (await getApplicationDocumentsDirectory()).path
+            : (await getApplicationDocumentsDirectory()).path;
         final ws = Directory('$base/sftp-local');
         await ws.create(recursive: true);
         if (!mounted) return;
@@ -381,7 +384,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
     String pathTo;
     if (dst.isLocal) {
       if (dst.lpath == null) {
-        if (Platform.isAndroid) {
+        // iOS 同走固定目录自愈（getDirectoryPath 在 iOS 未实现，兜底进 _pickLocalRoot
+        // 必抛 MissingPluginException 成死路——review P1#3）
+        if (Platform.isAndroid || Platform.isIOS) {
           await _initLocal(dst);
         } else {
           await _pickLocalRoot(dst);

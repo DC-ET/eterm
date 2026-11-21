@@ -138,8 +138,8 @@ class _SettingsPageState extends State<SettingsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _FontSizeSlider(),
-              // 辅助键条重排是触屏功能：桌面隐藏（评审 P2）
-              if (Platform.isAndroid) ...[
+              // 辅助键条重排是触屏功能：桌面隐藏（评审 P2；iOS 同为触屏，P7 扩闸）
+              if (Platform.isAndroid || Platform.isIOS) ...[
                 Divider(height: 24, color: Et.cardBorder),
                 _navRow(
                   icon: Icons.swap_vert,
@@ -182,8 +182,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
-              Divider(height: 24, color: Et.cardBorder),
-              _updateRow(),
+              // iOS：应用内更新被平台禁止，更新体验由 TestFlight 承担（D5/§4.8）
+              if (!Platform.isIOS) ...[
+                Divider(height: 24, color: Et.cardBorder),
+                _updateRow(),
+              ],
             ],
           ),
         ),
@@ -652,8 +655,8 @@ class _FontSizeSlider extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            // 捏合是触屏手势，桌面不显示（评审 P2）
-            if (Platform.isAndroid)
+            // 捏合是触屏手势，桌面不显示（评审 P2；iOS 同为触屏，P7 扩闸）
+            if (Platform.isAndroid || Platform.isIOS)
               Text('双指捏合终端画面也可调整；所有终端标签即时生效。',
                   style: TextStyle(fontSize: 12, color: Et.textSecondary)),
           ],

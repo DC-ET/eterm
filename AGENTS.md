@@ -5,7 +5,7 @@
 ## 目录
 
 - `server/` — 中枢服务端，**Node 22 + TypeScript + Fastify 5 + mysql2**（⚠️ 根 README 与 Makefile 中的 Go 段落是过时遗留，以本文件为准）
-- `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android + Windows 桌面）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
+- `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android + Windows 桌面 + iPhone）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
 - `deploy/` — nginx/systemd/备份（生产：`eterm.etarch.cn`，root@120.26.109.221，systemd 单元 `eterm`，源码 /opt/eterm）
 - `docs/` — PRD、技术方案、`eterm-发布流程.md`（改发布相关前必读）
 
@@ -19,10 +19,15 @@ npm run dev / migrate / create-user  # 需 ETERM_DB_DSN + ETERM_PEPPER + ETERM_M
 # client/app（Flutter）
 flutter analyze                      # 必须 0 error 再提交
 flutter build macos --debug          # 桌面验证
-flutter test / cd rust && cargo test --lib   # rust 测试 7 个
+flutter build ios --simulator --debug # iOS 模拟器构建（cargokit 编 Rust，免签名）
+flutter test / cd rust && cargo test --lib   # rust 测试 22 个
 
 # Android 发布（覆盖上传到服务器，勿改约定）
 client/app/scripts/release_android.sh        # 产物 sha256 双端校验
+
+# iOS 发布（TestFlight 苹果托管分发，勿改约定；须 ASC API Key）
+client/app/scripts/release_ios.sh            # bump → build ipa → TestFlight 上传 → commit bump
+client/app/scripts/release_ios.sh --no-upload # 本地演练（--no-codesign 免签名）
 ```
 
 ```powershell
@@ -66,6 +71,17 @@ client\app\scripts\release_windows.ps1        # -NoUpload 本地演练；上传�
 - Windows 机工具链锁定：Flutter **3.50.x**（gitee 镜像 clone，channel 显示 user-branch 属正常；脚本按 3.50 主版本前置校验）+ VS 2022「使用 C++ 的桌面开发」+ Rust `stable-x86_64-pc-windows-msvc`（cargokit 必须 msvc，不用 gnu）+ NSIS 3（Unicode）。
 - git 本机 `core.autocrlf input`（防跨平台换行搅动 .sh/.nsis）；`pubspec.lock` 已入库锁定两端插件版本（D14）；ps1/.nsis 含中文，**必须 UTF-8 with BOM**（PowerShell 5.1 无 BOM 按 ANSI 误读）。
 - JAVA_HOME 钉 GraalVM 那条不适用 Windows；Windows 机 `flutter build apk` 不受影响（没有该陷阱）。
+
+## iOS 端（2026-11-21 接入，方案见 docs/plan/eterm-iOS客户端技术方案.md）
+
+- **iPhone-only**（`TARGETED_DEVICE_FAMILY=1` + Info.plist 仅 Portrait）：锁竖屏（D15）是硬约束——横屏逻辑宽 ≥720 会翻进桌面布局死分支并触发已知 P1 IndexedStack 重建断连；iPad 兼容模式能跑不承诺（D10）。deployment target = Flutter 3.50 默认 **iOS 15.0**（不主动抬高）。
+- 环境（同 mac 主力机）：Flutter 3.50.x + Xcode 26+ + Rust targets `aarch64-apple-ios aarch64-apple-ios-sim` + CocoaPods（SPM 已全局关，正好避开 SPM 生成器坑）；bundle id `dev.eterm.eterm` 与 Android applicationId 同源；真机首连须开「开发者模式」（iOS 16+）。
+- 发布须 Apple Developer 付费账号（D2）：**个人账号 ASC 团队只有账号持有者**，内测仅自己可用；给他人装走外部测试组（每 version 首传轻量 Beta 审核）。上传 `xcrun altool` + ASC API Key（altool 被 Xcode 26 移除时兜底 Transporter.app，核验项 #13 定型）；build 号 per-version 单调，bump 不变式与 Android 同构。
+- Info.plist：ATS 全放开（D8，内网 `http://` 中枢合法）+ `NSLocalNetworkUsageDescription`（**不声明则内网 SSH 静默失败**）+ `UIFileSharingEnabled`（SFTP 落 `Documents/sftp-local`，「文件」App/Finder 可见）+ `ITSAppUsesNonExemptEncryption=false`（免每次上传的加密合规答题）。
+- 后台语义（D4/D13）：iOS 无前台服务等价物，退后台进程挂起、socket 冻结——shell 的 `WidgetsBindingObserver` 回前台触发 `realtime.probe()`（清退避直连）+ 静默对账 + 终端标签自动重连（closed 立即重连 / live 武装 60s 窗口），**仅移动端生效**（桌面 macOS resumed 是窗口聚焦噪声，勿扩闸）。Android 无前台服务挂起时同样受益。
+- `file_selector` 的 save 类 API iOS 未实现（与 Android 同病）；`openFile` 返回 security-scoped URL，Rust 直接读的实测结论见方案核验项 #15。
+- ios/ 生成物入库边界：Runner 工程/Info.plist/Podfile/**Podfile.lock** 入库（对齐 macos）；`Pods/` 与 `ios/Flutter/` 生成物被根 .gitignore 覆盖（`client/**/Pods/`）。`DEVELOPMENT_TEAM`（个人 Team ID）已入库——换 Apple ID/团队时需改 `ios/Runner.xcodeproj/project.pbxproj`（3 处）。
+- flutter_launcher_icons 的 `remove_alpha_ios` 是**根级键**（0.14.4 放 `ios:` 块内被静默忽略，1024 图标带 alpha 上传 ASC 被 ITMS-90717 拒）——本轮 review 实锤。
 
 ## 测试账号与环境
 
