@@ -25,5 +25,4 @@ coverage.out
 # flutter
 .dart_tool/
 .flutter-plugins*
-pubspec.lock
 *.g.dart

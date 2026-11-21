@@ -1,6 +1,7 @@
 # eterm · Windows 客户端技术方案
 
-> 版本：v1.0 ｜ 日期：2026-11-21 ｜ 状态：**已拍板，未实施**（当日评审定稿：D2/D4/D7/D9·D10 现场确认，其余按建议通过）
+> 版本：v1.1 ｜ 日期：2026-11-21 ｜ 状态：**已拍板，未实施**（当日评审定稿：D2/D4/D7/D9·D10 现场确认，其余按建议通过）
+> **v1.1 变更**：可行性复审补充 9 处（不改已拍板决策）：§4.1 create 命令显式 `--org dev.eterm` + BINARY_NAME/exe 名口径；§5 与核验项 #7 VC++ 运行库；§6 下载落盘目录与传输中断语义；§7.1 autocrlf；§7.2 bump 前置校验（修正「无竞态」表述）+ 执行策略；§8 中文用户名用例；§10 pubspec.lock 漂移风险；核验项 #8 旧 Win10 根证书；修正 §4.1 核验项编号引用（#7→#6）。同场拍板两项新决策：**D13** exe 名统一 `Eterm`、**D14** pubspec.lock 入库锁定。
 > **v1.0 变更**：D2 定稿为「在手头 x64 Windows 机上直接开发与构建」（用户确认可在 Windows 上开发），VM/云机降为兜底；随之取消「ARM64 VM 产 x64」核验项。
 > 上游文档：[eterm-技术方案.md](eterm-技术方案.md)（下称技术方案）。本文只覆盖「新增 Windows 平台目标」这一件事，不重复技术方案已论证的架构铁律。
 > 关联：[eterm-自动更新方案.md](eterm-自动更新方案.md)（Windows 更新机制并入其分发体系，见 §6）、[eterm-发布流程.md](../eterm-发布流程.md)（实施本文后需增补 Windows 发布小节）。
@@ -53,7 +54,7 @@
 
 ## 2. 决策记录（待评审）
 
-12 项已于 2026-11-21 评审拍板（D2/D4/D7/D9·D10 现场确认，其余按建议通过）。备选与不选原因集中在关键项展开，其余一句话即可。
+14 项已拍板（D1–D12 于 2026-11-21 评审定稿：D2/D4/D7/D9·D10 现场确认，其余按建议通过；D13/D14 为同日可行性复审补充拍板）。备选与不选原因集中在关键项展开，其余一句话即可。
 
 ### 2.1 决策总表
 
@@ -69,8 +70,10 @@
 | D8 | 自动更新 | **并入既有自动更新方案三端体系**：`eterm-windows.json` + 应用内下载 setup → sha256 → 退出应用 + spawn `setup.exe /S` → 安装器末段自动重启 | 与 Android 同构复用 nginx `/updates/`；Windows 上只有"安装步骤"不同 | §6 |
 | D9 | 托盘 / 最小化到托盘 / 开机自启 | **不做** | macOS 现状即关窗即退出、无托盘；Windows 保持行为一致，避免新增平台语义 | §11 |
 | D10 | 单实例锁（防双开） | **不做** | 与 macOS 一致；SQLite WAL + 中枢同步对双开有基本容忍 | §11 |
-| D11 | 发布脚本与磁盘约定 | **`release_windows.ps1`（Windows 侧执行）**，PowerShell 重实现 bump_build 语义；产物**覆盖同一文件** `eterm-windows-setup.exe`（沿磁盘紧张约定） | 与 release_android.sh 同构；两脚本异机执行，无 build 号竞态 | §7 |
+| D11 | 发布脚本与磁盘约定 | **`release_windows.ps1`（Windows 侧执行）**，内嵌 bump_build 语义；产物**覆盖同一文件** `eterm-windows-setup.exe`（沿磁盘紧张约定） | 与 release_android.sh 同构；异机执行无文件竞态，但 bump 必须基于最新 pubspec（§7.2 前置校验） | §7 |
 | D12 | 功能范围 | **桌面布局全功能对齐 macOS，Windows 专属新功能为零** | 复用矩阵决定的功能面天然全量；差异仅在标题栏与打包 | §4.5 |
+| D13 | Windows exe 名 | **`BINARY_NAME` 统一为 `Eterm`**（产物 `Eterm.exe`） | 与 macOS PRODUCT_NAME=Eterm 品牌口径一致；Runner.rc 的 ProductName 不随之变，数据目录稳定 | §4.1 |
+| D14 | Dart 依赖锁定 | **pubspec.lock 入库**（.gitignore 已移除忽略行，下次任一端 `pub get` 生成后提交首份 lock） | 与 Cargo.lock 对称锁两端插件版本；Flutter 应用官方推荐提交 lock | §10 |
 
 ### 2.2 D2 构建环境（已定稿：Windows 机直接开发）
 
@@ -152,10 +155,11 @@
 
 ```bash
 cd client/app
-flutter create --platforms=windows
+flutter create --platforms=windows --org dev.eterm .
 ```
 
-- 生成 `windows/`（CMakeLists、runner C++/rc、runner.exe.manifest）。期望 org 沿用 `dev.eterm`（与 android/macos 一致），创建后核对 `windows/runner/Runner.rc` 的 CompanyName/ProductName（见核验项 #7 与 #1）。
+- 生成 `windows/`（CMakeLists、runner C++/rc、runner.exe.manifest）。org **显式传 `--org dev.eterm`**（与 android/macos 一致）：org 写入 Runner.rc 的 CompanyName，直接决定 path_provider_windows 的 `%APPDATA%\<CompanyName>\<ProductName>` 落位（§4.4），不要依赖 create 对既有平台的隐式推断行为；创建后核对 `windows/runner/Runner.rc` 的 CompanyName/ProductName（核验项 #6 与 #1）。
+- **exe 名已拍板（D13）**：生成后把 `windows/CMakeLists.txt` 的 `BINARY_NAME` 统一改 `set(BINARY_NAME "Eterm")`（默认为 `eterm`），与 macOS 品牌口径（bd189bd 的 PRODUCT_NAME=Eterm）一致，§5/§6 的 exe 引用随之对齐；Runner.rc 的 ProductName 不随之变，数据目录保持稳定，勿为改名重生成 runner。
 - `flutter_launcher_icons` 的 pubspec 配置段补 `windows: generate: true`（生成 ico 并更新 runner.rc），源图复用 `assets/icon/`。
 - 生成物全部入库（在 Windows 开发机上执行，D2）；此后 mac 端日常 `flutter analyze` / `flutter test` 不受影响（不构建 windows 目标）。
 - flutter 的 Windows manifest 默认 Per-Monitor V2 DPI aware，高分屏开箱即用，无需处理。
@@ -227,6 +231,7 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 ```
 
 - 产物 `eterm-windows-setup.exe`，体积预估 60–90MB（Flutter Windows + Rust 库 + NSIS 压缩）。
+- **VC++ 运行库**：Flutter Windows 产物动态链接 MSVC 运行时（vcruntime140/msvcp140），开发机必有但干净用户机可能缺失（启动即报缺 dll）。核验项 #7 在无开发工具的干净机器实测；缺失则安装器静默附带 `vc_redist.x64.exe`（已装则跳过）。
 - 静默安装/卸载 `/S`；安装完成页（非静默时）可选「运行 Eterm」。
 - 覆盖安装遇运行中 exe：手动场景在安装页提示先关闭应用；自动更新场景由流程保证（§6）。
 
@@ -243,7 +248,9 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 | MotW | n/a | 应用内下载不落 Zone.Identifier，运行 setup 不叠加 SmartScreen（§2.6） |
 | 失败语义 | 静默/轻提示，不碰主功能 | 同左 |
 
-会话安全：退出安装前走正常退出路径（kv/游标已即时持久化），无特殊处理。
+下载落盘：Windows 侧落 `getApplicationTemporaryDirectory()`（`%LOCALAPPDATA%\Temp`），固定文件名 `eterm-windows-setup.exe` 覆盖写；sha256 校验失败即删，不留半包。
+
+会话安全：退出安装前走正常退出路径（kv/游标已即时持久化），无特殊处理；SFTP 传输若进行中，中断走 `.eterm-part` 暂存续传语义（可恢复），无需等待传输完成再退出。
 
 ## 7. 构建环境与发布脚本（D2/D11）
 
@@ -256,14 +263,16 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 | Visual Studio | 2022 Community + 「使用 C++ 的桌面开发」工作负载（MSVC v143 + Windows SDK） |
 | Rust | rustup，`stable-x86_64-pc-windows-msvc` 工具链（cargokit 调 cargo，**必须 msvc 不用 gnu**） |
 | NSIS | NSIS 3（Unicode） |
-| Git | Git for Windows；源码经 git clone 到本机（gitee 远程） |
+| Git | Git for Windows；源码经 git clone 到本机（gitee 远程）；本机 `git config core.autocrlf input`（防跨平台换行搅动 .sh/.nsis 脚本） |
 | 网络工具 | OpenSSH client 与 curl（Windows 10+ 内置，scp 上传/回读校验用） |
 
 ### 7.2 `client/app/scripts/release_windows.ps1`（新增）
 
 ```powershell
-# 1. bump pubspec build 号（PowerShell 重实现 lib_version.sh 的 bump_build 语义；
-#    与 bash helper 异机执行，无竞态——自动更新方案 §9.1 的单一事实源原则不变）
+# 0. 前置校验：git status 干净 + git pull --ff-only 最新——pubspec.yaml 是 build 号唯一
+#    事实源，两台异机的发布脚本都须基于最新 pubspec bump，否则可能撞号
+# 1. bump pubspec build 号（bump 语义内嵌本脚本，与自动更新方案 §9.1 的 lib_version.sh
+#    同语义；注意 lib_version.sh 随该方案实施才新增，M3 时点先由本脚本承载）
 # 2. flutter build windows --release
 #    产物 build\windows\x64\runner\Release\
 # 3. makensis installer\eterm.nsis → eterm-windows-setup.exe
@@ -272,6 +281,8 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 #    （磁盘紧张约定：覆盖同一文件，勿新增版本副本）
 # 6. curl 公网回读 JSON，校验 version/build 与本次一致（对齐 release_android.sh 校验模式）
 ```
+
+首次运行放开执行策略：`powershell -ExecutionPolicy Bypass -File scripts\release_windows.ps1`（或本机一次性 `Set-ExecutionPolicy RemoteSigned CurrentUser`）。
 
 `docs/eterm-发布流程.md` 增补 Windows 发布小节；AGENTS.md 增补 Windows 常用命令与陷阱（JAVA_HOME 那条不适用 Windows，勿照搬）。
 
@@ -283,7 +294,7 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 
 | 域 | 用例 |
 |---|---|
-| 安装/启动 | NSIS 安装（免 UAC）→ 启动 → 升级覆盖安装 → 卸载（数据保留）→ 重装数据仍在 |
+| 安装/启动 | NSIS 安装（免 UAC）→ 启动 → 升级覆盖安装 → 卸载（数据保留）→ 重装数据仍在；**中文/含空格用户名**下安装、启动、数据落位与 SFTP 选本机目录（%APPDATA%/%LOCALAPPDATA% 路径带中文/空格） |
 | 同步 | 登录 → 首拉 → 主机/凭据/分组增删改 → 与 mac 端互同步（WS 实时 + 离线后增量） |
 | 终端 | 连接 k7；**中文 IME 输入**（候选窗定位、全半角、Ctrl 组合键与输入法热键冲突）；Ctrl±/0 字号；右键复制粘贴；20000 行回滚；Consolas 渲染与中文回退 |
 | SFTP | 上传/下载（含中文与含空格路径）；中断续传（`.eterm-part`）；冲突改名；远端编辑回传；跨盘/中文目录选根 |
@@ -317,6 +328,7 @@ M0–M3 合计约 1 周（功能共享度决定的主要成本在环境与验收
 | 单台 Windows 构建环境成单点 | 低 | 脚本 + 环境清单文档化，重建成本低；不引入 CI 是明确取舍 |
 | path_provider 目录命名与预期不符 | 低 | 仅影响首次落位，数据可重建（§2.4）；核验项 #1 开工即核 |
 | Flutter/Rust 工具链版本漂移（VM 与 mac 端不一致） | 低 | 发布脚本前置校验 Flutter 版本；AGENTS.md 记录环境锁定口径 |
+| pubspec.lock 历史上未入库，Windows 机首次 `pub get` 曾可能独立解析漂移（本文引用的 file_selector_windows 0.9.3+6 等取自 mac 本机 lock） | 低 | **已拍板（D14）入库锁定**：`.gitignore` 已移除忽略行，下次任一端 `pub get` 生成首份 lock 并提交；后续依赖变更以 lock diff 审查（Rust 侧 Cargo.lock 本就入库） |
 
 ## 11. 明确不做
 
@@ -338,6 +350,8 @@ M0–M3 合计约 1 周（功能共享度决定的主要成本在环境与验收
 4. NSIS Unicode + 中文安装文案 + 中文路径目录行为。
 5. Defender 对未签名产物（exe/dll）首跑的启发式行为。
 6. `flutter create --platforms=windows` 是否正确沿用 org（`dev.eterm`）生成 runner 元信息。
+7. VC++ 运行库：无开发工具的干净 Windows 机器上验证产物直接启动（缺 vcruntime140/msvcp140 的表现），决定安装器是否附带 vc_redist.x64（§5）。
+8. 旧版 Win10（长期未更新、可能缺 ISRG Root X1 根证书）登录中枢 TLS 是否正常（dart:io 在 Windows 走系统根证书库）；失败属系统级，提示更新系统即可。
 
 ---
 
