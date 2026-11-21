@@ -10,19 +10,18 @@ class AppDelegate: FlutterAppDelegate {
   // 启动报错刷日志；手动入口经 FlutterError 明确报「未配置」。
   private var updaterController: SPUStandardUpdaterController?
 
-  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return true
-  }
-
-  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-    return true
-  }
-
+  // ⚠️ 本版本（Flutter 3.50）的 FlutterAppDelegate 未实现 applicationDidFinishLaunching:
+  // selector（生命周期转发已重构进 FlutterAppLifecycleDelegate），在 override 里调
+  // super 会抛 NSInvalidArgumentException unrecognized selector 且被 AppKit 吞掉，
+  // 导致本方法体后半段（更新通道 + Sparkle 启动）静默不执行——实测踩坑，勿加回 super。
   override func applicationDidFinishLaunching(_ notification: Notification) {
-    super.applicationDidFinishLaunching(notification)
+    NSLog("eterm: applicationDidFinishLaunching 进入")
     // 设置页「检查更新」手动入口（§7.5）：Dart → MethodChannel → Sparkle 标准界面接管
     guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController
-    else { return }
+    else {
+      NSLog("eterm: mainFlutterWindow/contentViewController guard 未通过，跳过更新通道")
+      return
+    }
     let channel = FlutterMethodChannel(
       name: "eterm/update", binaryMessenger: controller.engine.binaryMessenger)
     channel.setMethodCallHandler { [weak self] call, result in
@@ -46,6 +45,21 @@ class AppDelegate: FlutterAppDelegate {
     } else {
       updaterController = SPUStandardUpdaterController(
         startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+      if let updater = updaterController?.updater {
+        NSLog("eterm: Sparkle updater 已创建 autoCheck=%d interval=%.0f",
+              updater.automaticallyChecksForUpdates ? 1 : 0,
+              updater.updateCheckInterval)
+      } else {
+        NSLog("eterm: SPUStandardUpdaterController 创建后 updater 为空")
+      }
     }
+  }
+
+  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    return true
+  }
+
+  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+    return true
   }
 }
