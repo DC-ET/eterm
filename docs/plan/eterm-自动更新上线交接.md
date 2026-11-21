@@ -139,6 +139,20 @@ client/app/scripts/release_macos.sh                # 正式：bump → +2，上�
 | Sparkle Downloader XPC | **不要**启用 `SUEnableDownloaderService`（WebKit 老渲染 + 丧失版本自适应 notes，方案 §7.3） |
 | release notes | mac appcast `<description>` 由脚本注入（git log 标题）；Android JSON `notes` 同源；自定义用 `--notes="..."` |
 
+### 8.1 2026-11-21 mac 机上线实踩补充（均已修复/解决）
+
+| 坑 | 说明 |
+|---|---|
+| FlutterAppDelegate 无该 selector（P0） | Flutter 3.50 的 `FlutterAppDelegate` **不再实现** `applicationDidFinishLaunching:`（生命周期转发重构进 `FlutterAppLifecycleDelegate`）；自定义 AppDelegate 里调 `super.` 会抛 unrecognized selector 且被 AppKit 吞掉，方法体后半段静默不执行 → 更新通道与 Sparkle 从未启动。已修（8c17c36），勿加回 super |
+| pod install 全挂 | CocoaPods trunk CDN（cdn.jsdelivr.net）与 GitHub 在构建机直连不可达、cdn.cocoapods.org 只有索引没 spec。解法：借生产服务器出口开 SSH SOCKS（`ssh -f -N -D 127.0.0.1:1080 root@120.26.109.221 -i <pem>`），pod/构建时 `export all_proxy=socks5h://127.0.0.1:1080` |
+| generate_appcast 输出名 | Sparkle 2.9 按归档名派生 appcast 文件名（`eterm-mac.zip`→`eterm-mac.xml`），不是固定 `appcast.xml`；release_macos.sh 已改 glob 取产物 |
+| Kotlin 首编幻觉 API | `OutputStream.fsync()` 不存在（Windows 机 gradle 损坏从未真编译）；PackageInstaller 流程 write→flush→close→commit 自带校验。已修（36c2889）。**Swift/Kotlin 原生代码在任何新机首次 `flutter build` 都是有效门禁** |
+| generate_keys 两步 | `generate_keys`（无参）先生成入钥匙串，`-x` 只导出不生成（交接文档旧写法一步到位是错的，发布流程文档已勘误） |
+| Sparkle 首启授权框 | 首次启动会弹「Check for updates automatically?」，未回答前不检查；`SUHasLaunchedBefore` 落地后不再弹。updater 刚 init 时读 `automaticallyChecksForUpdates` 可能读到 0（异步 startup 未完成），不是配置问题 |
+| 本机统一日志不可读 | `log show` 报 "Could not open local log store"；NSLog 会同时走 stderr（终端重定向可见），诊断输出优先 stderr |
+| pubspec.lock 漂移 | 手动跑 flutter 命令若不带 `PUB_HOSTED_URL`，pub get 会把 lock 里 `pub.flutter-io.cn` 改写成 `pub.dev` 污染工作区；发布脚本已内置镜像 env，手动跑记得带 |
+| 线上 nginx conf 漂移 | 生产 conf 与仓库 conf 有历史差异（http2 曾被故意关掉）；**不要整份覆盖**，只手术式并入 `/updates/` location 块（已按此完成） |
+
 ## 9. 文档索引
 
 - [eterm-自动更新方案.md](eterm-自动更新方案.md)（v1.2 设计全集：§4 nginx / §5-§8 三端设计 / §9 发布脚本 / §10 测试 / §11 验收顺序 / §12 风险）

@@ -127,7 +127,9 @@ SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 
 ### EdDSA 私钥管理（一次性，§9.3）
 
 ```bash
-macos/Pods/Sparkle/bin/generate_keys -x ~/Downloads/eterm-sparkle-ed25519   # 生成并导出私钥文件（0600）
+macos/Pods/Sparkle/bin/generate_keys                                        # ① 先生成（存入钥匙串，无参）
+macos/Pods/Sparkle/bin/generate_keys -x ~/Downloads/eterm-sparkle-ed25519   # ② 再导出私钥文件（-x 只导出不生成，0600）
+macos/Pods/Sparkle/bin/generate_keys -p                                     # 打印公钥
 # 把公钥写进 macos/Runner/Info.plist 的 SUPublicEDKey（脚本前置校验拦截占位符）
 ```
 
