@@ -24,7 +24,7 @@ class AppDelegate: FlutterAppDelegate {
     guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController
     else { return }
     let channel = FlutterMethodChannel(
-      name: "eterm/update", binaryMessenger: controller.binaryMessenger)
+      name: "eterm/update", binaryMessenger: controller.engine.binaryMessenger)
     channel.setMethodCallHandler { [weak self] call, result in
       guard call.method == "checkForUpdates" else {
         result(FlutterMethodNotImplemented)
