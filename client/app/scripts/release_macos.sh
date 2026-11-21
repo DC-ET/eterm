@@ -88,7 +88,9 @@ trap 'rm -rf "$STAGE"' EXIT
 cp "build/$ZIP" "$STAGE/$ZIP"
 "$SPARKLE_BIN/generate_appcast" --ed-key-file "$SPARKLE_KEY" \
   --download-url-prefix "$BASE_URL/" "$STAGE"
-mv "$STAGE/appcast.xml" "build/$APPCAST"
+# Sparkle 2.9 的 generate_appcast 用归档名派生输出文件名（eterm-mac.zip → eterm-mac.xml），
+# 不是固定的 appcast.xml；暂存目录只有本次产物，glob 取生成的 xml 即可
+mv "$STAGE"/*.xml "build/$APPCAST"
 
 # 3.5 注入 <description>（git log 标题；XML 转义交给 saxutils，手拼会翻车 §4.2）
 NOTES="${NOTES_ARG:-$(git log -1 --pretty=%s)}"
