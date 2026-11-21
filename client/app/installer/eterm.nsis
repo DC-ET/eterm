@@ -1,0 +1,138 @@
+﻿; Eterm per-user 安装器（NSIS 3 Unicode）
+; 约定：docs/plan/eterm-Windows客户端技术方案.md §5 / §6（D6/D8）、docs/eterm-发布流程.md
+;   - per-user 免 UAC：装 %LOCALAPPDATA%\Programs\Eterm，卸载项登记 HKCU
+;   - 升级 = 覆盖安装；运行中检测：占用时提示先退出（自动更新链路由流程保证先退出）
+;   - 静默 /S：装完自动重启应用（自动更新：退出 → setup /S → Exec 重启，§6）
+;   - 卸载保留 %APPDATA% 用户数据（与 macOS「删 .app 不删数据」一致，§2.5）
+; 版本号由发布脚本传入：makensis -DVERSION=1.0.0 build\...
+Unicode true
+!include "MUI2.nsh"
+
+!define EXE        "Eterm.exe"
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Eterm"
+!define RELDIR     "..\build\windows\x64\runner\Release"
+
+Name "Eterm"
+OutFile "..\build\eterm-windows-setup.exe"
+InstallDir "$LOCALAPPDATA\Programs\Eterm"
+InstallDirRegKey HKCU "Software\Eterm" "InstallDir"  ; 记忆上次安装目录，避免自选目录后双装残留
+RequestExecutionLevel user
+SetCompressor /SOLID lzma
+
+; VC++ 运行库兜底（§5 核验项 #7）：Eterm.exe 动态链接 MSVCP140/VCRUNTIME140，
+; 干净用户机缺库即首启失败。发布脚本保证 vc_redist.x64.exe 在位（不入库），
+; 在位则打入安装包并在目标机缺库时提权引导安装。
+!if /FileExists "vc_redist.x64.exe"
+  !define HAS_VCREDIST
+!endif
+
+!define MUI_ABORTWARNING
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "运行 Eterm"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "SimpChinese"
+
+; 安装前运行中检测：目标 exe 被占用即安装中文件写入会失败（Windows 锁定运行中
+; exe），提前拦截并提示。静默模式（自动更新）跳过——更新流程已先退出应用。
+Function .onInit
+  IfSilent done
+  IfFileExists "$INSTDIR\${EXE}" 0 done
+  ClearErrors
+  FileOpen $0 "$INSTDIR\${EXE}" a
+  IfErrors running closed
+  closed:
+    FileClose $0
+    Goto done
+  running:
+    MessageBox MB_ICONEXCLAMATION|MB_OK "检测到 Eterm 正在运行，请先退出 Eterm 后再运行安装程序。"
+    Abort
+  done:
+FunctionEnd
+
+Function un.onInit
+  IfSilent done
+  IfFileExists "$INSTDIR\${EXE}" 0 done
+  ClearErrors
+  FileOpen $0 "$INSTDIR\${EXE}" a
+  IfErrors running closed
+  closed:
+    FileClose $0
+    Goto done
+  running:
+    MessageBox MB_ICONEXCLAMATION|MB_OK "检测到 Eterm 正在运行，请先退出 Eterm 后再卸载。"
+    Abort
+  done:
+FunctionEnd
+
+Section "Eterm 主程序" SecMain
+  SectionIn RO
+  SetOutPath "$INSTDIR"
+  File /r "${RELDIR}\*.*"
+  !ifdef HAS_VCREDIST
+    File "vc_redist.x64.exe"
+  !endif
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+  !ifdef HAS_VCREDIST
+    ; VC++ x64 runtime 注册键在 64 位注册表视图（NSIS 默认 32 位进程会被 WOW64
+    ; 重定向），须 SetRegView 64 读取；缺失则 UAC 提权静默安装（取消 UAC 不阻断，
+    ; 后果仅是缺库机器上首启失败，用户可手动装运行库）
+    SetRegView 64
+    ClearErrors
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Version"
+    SetRegView lastused
+    ${If} ${Errors}
+      DetailPrint "未检测到 VC++ 运行库，安装 vc_redist（可能弹出系统授权确认）"
+      ExecShell "runas" "$INSTDIR\vc_redist.x64.exe" "/install /quiet /norestart" SW_SHOW
+    ${EndIf}
+  !endif
+
+  ; 开始菜单快捷方式
+  CreateDirectory "$SMPROGRAMS\Eterm"
+  CreateShortcut "$SMPROGRAMS\Eterm\Eterm.lnk" "$INSTDIR\${EXE}"
+  CreateShortcut "$SMPROGRAMS\Eterm\卸载 Eterm.lnk" "$INSTDIR\Uninstall.exe"
+
+  ; HKCU 卸载登记（「应用和功能」可见）；含空格路径必须带引号
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "Eterm"
+  !ifdef VERSION
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
+  !endif
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "eterm"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" '"$INSTDIR\${EXE}"'
+  WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+  WriteRegStr HKCU "Software\Eterm" "InstallDir" "$INSTDIR"
+
+  ; 静默模式（自动更新链路）：覆盖安装完成后自动重启应用（§6）
+  IfSilent 0 +2
+    Exec '"$INSTDIR\${EXE}"'
+SectionEnd
+
+Section /o "创建桌面快捷方式" SecDesktop
+  CreateShortcut "$DESKTOP\Eterm.lnk" "$INSTDIR\${EXE}"
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Eterm 主程序（必装）。"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "在桌面创建 Eterm 快捷方式。"
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+Section "Uninstall"
+  ; 仅删安装目录与登记；%APPDATA% 用户数据（eterm.db/lkmk.bin）保留（§2.5）
+  RMDir /r "$INSTDIR"
+  Delete "$SMPROGRAMS\Eterm\Eterm.lnk"
+  Delete "$SMPROGRAMS\Eterm\卸载 Eterm.lnk"
+  Delete "$DESKTOP\Eterm.lnk"
+  RMDir "$SMPROGRAMS\Eterm"
+  DeleteRegKey HKCU "${UNINST_KEY}"
+SectionEnd

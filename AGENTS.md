@@ -5,7 +5,7 @@
 ## 目录
 
 - `server/` — 中枢服务端，**Node 22 + TypeScript + Fastify 5 + mysql2**（⚠️ 根 README 与 Makefile 中的 Go 段落是过时遗留，以本文件为准）
-- `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
+- `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android + Windows 桌面）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
 - `deploy/` — nginx/systemd/备份（生产：`eterm.etarch.cn`，root@120.26.109.221，systemd 单元 `eterm`，源码 /opt/eterm）
 - `docs/` — PRD、技术方案、`eterm-发布流程.md`（改发布相关前必读）
 
@@ -23,6 +23,17 @@ flutter test / cd rust && cargo test --lib   # rust 测试 7 个
 
 # Android 发布（覆盖上传到服务器，勿改约定）
 client/app/scripts/release_android.sh        # 产物 sha256 双端校验
+```
+
+```powershell
+# client/app（Windows，在 Windows 机上）
+flutter analyze                     # 门禁同 mac：0 error
+flutter build windows --release     # 产物 build\windows\x64\runner\Release\（Eterm.exe）
+flutter test                        # 门禁同 mac；cargo test --lib 同左
+Push-Location installer; makensis -DVERSION="1.0.0+1" eterm.nsis; Pop-Location  # → build\eterm-windows-setup.exe
+
+# Windows 发布（覆盖上传到服务器，勿改约定；须 Windows 机执行；默认策略被拦时加 -ExecutionPolicy Bypass）
+client\app\scripts\release_windows.ps1        # -NoUpload 本地演练；上传校验通过后自动 commit+push bump
 ```
 
 ## 架构与契约（改同步协议前必读）
@@ -46,6 +57,15 @@ client/app/scripts/release_android.sh        # 产物 sha256 双端校验
 - **任何 `flutter build apk`（含 debug）都要钉 `JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home`**：机器默认 java_home 指向 GraalVM，其 jlink 过不了 AGP 的 JdkImageTransform（assembleDebug 直接失败，报 `core-for-system-modules.jar` transform 错）。release 脚本已钉，手动构建易踩。
 - **file_selector 的 `getSaveLocation`/saveFile 在 Android 未实现**（openFile/getDirectoryPath 可用）——下载落盘不能走系统另存为；SFTP 下载写应用专属外部目录（`Android/data/<pkg>/files/sftp-local`，免权限）。SFTP 传输用 `<目标>.eterm-part` 暂存 + 完成后改名，取消/失败保留暂存，重试续传（rust/api/sftp.rs）。
 - 服务器磁盘紧张（~86%），APK 按 `docs/eterm-发布流程.md` 约定**覆盖同一文件**，大版本才留副本。
+
+## Windows 端（2026-11-21 接入，方案见 docs/plan/eterm-Windows客户端技术方案.md）
+
+- **Windows 发布必须在 Windows 机上做**（macOS 不能交叉编译）；工具链：Flutter 3.50.x（与 mac 同主版本，脚本前置校验）+ VS 2022「使用 C++ 的桌面开发」+ Rust `stable-x86_64-pc-windows-msvc`（cargokit 必须 msvc，不用 gnu）+ NSIS 3（Unicode）。
+- exe 名 `Eterm.exe`（`windows/CMakeLists.txt` 的 `BINARY_NAME`，D13）；`windows/` runner 生成物全部入库，`flutter create --platforms=windows --org dev.eterm .` 生成的 CompanyName 决定数据目录 `%APPDATA%\dev.eterm\eterm\`——**改 runner rc 前先想清楚数据目录迁移**。
+- 标题栏三钮在 `lib/ui/shell.dart`（`_WindowControls`）；**双击标题栏最大化沿用 DragToMoveArea 内建**（nativeapi 原生 SC_MAXIMIZE/SC_RESTORE，双端同源）——勿自建手势，原始 Listener 直判会与内建双击同时触发、两次切换互相抵消。
+- Windows 机工具链锁定：Flutter **3.50.x**（gitee 镜像 clone，channel 显示 user-branch 属正常；脚本按 3.50 主版本前置校验）+ VS 2022「使用 C++ 的桌面开发」+ Rust `stable-x86_64-pc-windows-msvc`（cargokit 必须 msvc，不用 gnu）+ NSIS 3（Unicode）。
+- git 本机 `core.autocrlf input`（防跨平台换行搅动 .sh/.nsis）；`pubspec.lock` 已入库锁定两端插件版本（D14）；ps1/.nsis 含中文，**必须 UTF-8 with BOM**（PowerShell 5.1 无 BOM 按 ANSI 误读）。
+- JAVA_HOME 钉 GraalVM 那条不适用 Windows；Windows 机 `flutter build apk` 不受影响（没有该陷阱）。
 
 ## 测试账号与环境
 

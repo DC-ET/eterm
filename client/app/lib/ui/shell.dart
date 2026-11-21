@@ -3,11 +3,13 @@
 // 窄屏（手机竖屏，<720）响应式：侧边导航换成底部导航栏，内容区满幅。
 // IndexedStack 保持后台终端标签的会话存活。
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/services.dart';
 
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
-import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea
+import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea/WindowListener（AGENTS：0.7 旧 API 走 legacy）
 import 'package:xterm/xterm.dart';
 
 import '../services/api_client.dart';
@@ -441,7 +443,7 @@ class _MobileTabBar extends StatelessWidget {
 
 // ---------- 标题栏 ----------
 
-class _TitleBar extends StatelessWidget {
+class _TitleBar extends StatefulWidget {
   const _TitleBar({
     required this.tabs,
     required this.activeTab,
@@ -457,43 +459,167 @@ class _TitleBar extends StatelessWidget {
   final void Function(int) onCloseTab;
 
   @override
+  State<_TitleBar> createState() => _TitleBarState();
+}
+
+class _TitleBarState extends State<_TitleBar> with WindowListener {
+  bool _maximized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isWindows) {
+      // Windows 三钮的 maximize/restore 图标切换需监听窗口状态；监听局部化在
+      // 标题栏内，不改 shell 全局结构（AGENTS.md 有 IndexedStack 重建断连前科）。
+      windowManager.addListener(this);
+      windowManager.isMaximized().then((v) {
+        if (mounted && v != _maximized) setState(() => _maximized = v);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isWindows) windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowMaximize() {
+    if (mounted) setState(() => _maximized = true);
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    if (mounted) setState(() => _maximized = false);
+  }
+
+  // legacy API（0.5.x 兼容层）没有 toggleMaximize，用 isMaximized 分支。
+  Future<void> _toggleMaximize() async {
+    if (await windowManager.isMaximized()) {
+      await windowManager.unmaximize();
+    } else {
+      await windowManager.maximize();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // 深色背景延伸到状态栏区（SafeArea 把内容行推到状态栏下方），视觉连续
+    // 深色背景延伸到状态栏区（SafeArea 把内容行推到状态栏下方），视觉连续。
+    // 双击标题栏 = 切换最大化：DragToMoveArea 内建（nativeapi 原生
+    // SC_MAXIMIZE/SC_RESTORE），macOS/Windows 同源，勿再自建手势——
+    // 原始 Listener 直判会与内建双击同时触发，两次切换互相抵消/竞态。
     return Container(
       color: Et.titleBar,
       child: SafeArea(
         bottom: false,
         child: SizedBox(
           height: 52,
-          child: DragToMoveArea(
-        child: Row(
-          children: [
-            const SizedBox(width: 78), // 交通灯让位区
-            _VaultPill(onSelectVault: onSelectVault),
-            const SizedBox(width: 10),
-            // 标签区：多了横向滚动，不挤溢通知钮
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (var i = 0; i < tabs.length; i++)
-                      _TermTabPill(
-                        label: tabs[i].host.label,
-                        active: activeTab == i,
-                        phase: tabs[i].phase,
-                        onTap: () => onSelectTab(i),
-                        onClose: () => onCloseTab(i),
-                        maxLabelWidth: 160,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
+          child: DragToMoveArea(child: _titleBarRow()),
         ),
       ),
+    );
+  }
+
+  Widget _titleBarRow() {
+    final isMac = Platform.isMacOS;
+    final isWin = Platform.isWindows;
+    return Row(
+      children: [
+        SizedBox(width: isMac ? 78 : 12), // mac：交通灯让位区；win：呼吸边
+        _VaultPill(onSelectVault: widget.onSelectVault),
+        const SizedBox(width: 10),
+        // 标签区：多了横向滚动，不挤溢通知钮
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var i = 0; i < widget.tabs.length; i++)
+                  _TermTabPill(
+                    label: widget.tabs[i].host.label,
+                    active: widget.activeTab == i,
+                    phase: widget.tabs[i].phase,
+                    onTap: () => widget.onSelectTab(i),
+                    onClose: () => widget.onCloseTab(i),
+                    maxLabelWidth: 160,
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        if (isWin) _WindowControls(maximized: _maximized, onToggleMaximize: _toggleMaximize),
+      ],
+    );
+  }
+}
+
+/// Windows 窗口控制三钮（min/max/close）。热区按 Windows 惯例 46×全高；
+/// close 悬停红底白图标，其余悬停浅灰（标题栏文字色低透明，与 macOS 同源取色）。
+class _WindowControls extends StatelessWidget {
+  const _WindowControls({required this.maximized, required this.onToggleMaximize});
+
+  final bool maximized;
+  final VoidCallback onToggleMaximize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _WindowButton(icon: Icons.minimize, onTap: windowManager.minimize),
+        _WindowButton(
+          icon: maximized ? Icons.filter_none : Icons.crop_square,
+          onTap: onToggleMaximize,
+        ),
+        _WindowButton(icon: Icons.close, isClose: true, onTap: windowManager.close),
+      ],
+    );
+  }
+}
+
+class _WindowButton extends StatefulWidget {
+  const _WindowButton({
+    required this.icon,
+    required this.onTap,
+    this.isClose = false,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isClose;
+
+  @override
+  State<_WindowButton> createState() => _WindowButtonState();
+}
+
+class _WindowButtonState extends State<_WindowButton> {
+  bool _hover = false;
+
+  // Windows 标准 caption close 悬停红（与应用 danger 令牌区分：这是系统惯例色）
+  static const _closeHoverRed = Color(0xFFE81123);
+
+  @override
+  Widget build(BuildContext context) {
+    final hoverBg =
+        widget.isClose ? _closeHoverRed : Et.titleBarText.withValues(alpha: 0.14);
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          width: 46, // Windows 惯例热区宽，全高（52px 行内）——比方案草案 46×32 更贴系统惯例
+          height: double.infinity,
+          color: _hover ? hoverBg : Colors.transparent,
+          alignment: Alignment.center,
+          child: Icon(
+            widget.icon,
+            size: 16,
+            color: widget.isClose && _hover ? Colors.white : Et.titleBarText,
+          ),
         ),
       ),
     );

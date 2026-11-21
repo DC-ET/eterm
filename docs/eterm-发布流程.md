@@ -40,6 +40,56 @@ apk 传到手机（微信文件传输助手 / 网盘 / USB 拷贝）→ 点开�
 - [ ] 登录/同步/连接一轮通过（guitest 测试账号或自有账号）
 - [ ] 服务端 `eterm` 服务正常（`systemctl is-active eterm`）
 
+## Windows 安装包
+
+### 约定（2026-11-21 起，D11）
+
+- **上传位置**：同 Android，`120.26.109.221:/opt/mao-data/uploads/eterm/`
+- **常规更新**：覆盖同一文件 `eterm-windows-setup.exe`（磁盘紧张约定）；不新增版本副本
+- 产物：NSIS per-user 安装器（免 UAC，装 `%LOCALAPPDATA%\Programs\Eterm`）；exe 名 `Eterm.exe`（D13）
+- `eterm-windows.json`（自动更新元数据）随包上传；应用内更新（M4）实施前仅占位
+- **必须在 Windows 机上发布**（macOS 不能交叉编译 Windows；环境清单见 Windows 技术方案 §7.1）
+
+### 一条命令发布
+
+```powershell
+client\app\scripts\release_windows.ps1            # 前置校验 + bump + 构建 + 打包 + 覆盖上传 + 校验
+client\app\scripts\release_windows.ps1 -NoUpload  # 本地演练：跳过上传/回读/提交
+```
+
+默认执行策略拦截时：`powershell -ExecutionPolicy Bypass -File client\app\scripts\release_windows.ps1`。
+
+脚本内部：git 干净 + pull --ff-only 前置校验（异机 bump 防 build 号撞号）→ 确保 installer\vc_redist.x64.exe
+就位（缺则从 aka.ms 下载，不入库）→ pubspec build 号 +1 → flutter build windows --release →
+makensis installer\eterm.nsis（-DVERSION 带 build 号）→ sha256 → scp 覆盖上传（setup + json）→
+curl 回读 JSON 校验版本 + ssh sha256sum 双端校验 → **自动 commit+push pubspec bump**
+（build 号唯一事实源，防跨机撞号）。
+SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 覆盖。
+安装包内含 vc_redist.x64.exe 兜底：目标机缺 VC++ 运行库（MSVCP140/VCRUNTIME140）时安装器
+引导 UAC 提权安装，避免首启报缺 dll。
+
+### 手动流程（等价）
+
+```powershell
+cd client\app
+flutter build windows --release                    # 产物 build\windows\x64\runner\Release\
+Push-Location installer; makensis -DVERSION="1.0.0" eterm.nsis; Pop-Location   # → build\eterm-windows-setup.exe
+Get-FileHash build\eterm-windows-setup.exe -Algorithm SHA256
+scp -i $env:ETERM_SSH_KEY build\eterm-windows-setup.exe root@120.26.109.221:/opt/mao-data/uploads/eterm/eterm-windows-setup.exe
+```
+
+### 用户安装/更新
+
+- 手动下载：浏览器会加 MotW，SmartScreen 提示「更多信息 → 仍要运行」（无签名口径，D7）；
+  应用内更新链路无 MotW（D8，实施 M4 后）
+- 覆盖安装前请退出 Eterm（安装器会检测运行中并拦截）；卸载保留 `%APPDATA%` 用户数据
+
+### 发布前自检清单
+
+- [ ] `flutter analyze` / `flutter test` / `cargo test --lib` 全绿（Windows 机本机跑）
+- [ ] 安装 → 启动 → 登录 → 连接 k7 一轮通过
+- [ ] 杀软（Defender）首启无拦截；若误报按 Windows 技术方案 §10 缓解
+
 ## 服务端部署（Node/TS）
 
 ### 生产形态

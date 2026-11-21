@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# VC++ 运行库兜底文件（发布脚本按需下载，25MB 不入库）
+installer/vc_redist.x64.exe

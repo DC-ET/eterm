@@ -17,6 +17,8 @@ pub fn load_or_create_lkmk(data_dir: &str) -> Result<Vec<u8>, String> {
     }
     let key: [u8; 32] = rand::random();
     std::fs::write(&path, key).map_err(|e| format!("写入 LKMK 失败: {e}"))?;
+    // Windows：不做额外权限收紧——文件落 %APPDATA% 用户 profile，默认 ACL 已隔离
+    // 其他标准用户，语义与 unix 0600 相当（D5，Windows 技术方案 §2.4）。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
