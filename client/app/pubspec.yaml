@@ -25,6 +25,8 @@ dependencies:
   # SFTP 上传/下载的本地文件选择（SAF / NSSavePanel）
   file_selector: ^1.1.0
   package_info_plus: ^10.2.2
+  # 更新包 sha256 校验（自动更新方案 §5.1；显式声明，不依赖传递依赖）
+  crypto: ^3.0.3
 
 # 镜像源曾把 foundation 解析到不存在的 1.9.1（无 macos 插件声明，导致注册表缺插件、
 # 桌面启动黑窗）。钉住已缓存的 2.6.0；镜像修复后可移除。

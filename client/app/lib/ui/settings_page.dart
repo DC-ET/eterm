@@ -1,14 +1,19 @@
 // 设置页（任务清单 #3/#5）：账户（修改密码/退出登录）、外观（浅色/深色/跟随系统）、
-// 终端字号、辅助键条重排、关于。主题切换经 ThemeController（全局重建，Et 令牌 +
+// 终端字号、辅助键条重排、关于与检查更新。主题切换经 ThemeController（全局重建，Et 令牌 +
 // Material 同源）；字号即改即存。登录信息不再放侧栏/标题栏，统一收敛在此。
+// 检查更新：Android/Windows 走 Dart 状态机（app_update.dart），macOS 经 MethodChannel
+// 触发 Sparkle 标准界面（自动更新方案 §5.2/§7.5）。
 
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:material_ui/material_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/api_client.dart';
 import '../services/app_state.dart';
+import '../services/app_update.dart';
 import 'terminal_gestures.dart';
 import 'terminal_tab.dart';
 import 'theme.dart';
@@ -32,6 +37,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   String _version = ''; // pubspec version（关于卡展示）
+  bool _checking = false; // 手动检查中：行内 spinner（自动更新方案 §5.2 状态机）
 
   @override
   void initState() {
@@ -148,35 +154,114 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 20),
         _sectionTitle('关于'),
         _card(
-          child: Row(
+          child: Column(
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.asset('assets/icon/icon-1024.png',
-                    width: 44, height: 44, fit: BoxFit.cover),
+              Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.asset('assets/icon/icon-1024.png',
+                        width: 44, height: 44, fit: BoxFit.cover),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_version.isEmpty ? 'Eterm' : 'Eterm v$_version',
+                            style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Et.textPrimary)),
+                        const SizedBox(height: 2),
+                        Text('服务器信息与密钥的统一中枢 · 数据面直连目标主机',
+                            style: TextStyle(
+                                fontSize: 12.5, color: Et.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_version.isEmpty ? 'Eterm' : 'Eterm v$_version',
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Et.textPrimary)),
-                    const SizedBox(height: 2),
-                    Text('服务器信息与密钥的统一中枢 · 数据面直连目标主机',
-                        style: TextStyle(
-                            fontSize: 12.5, color: Et.textSecondary)),
-                  ],
-                ),
-              ),
+              Divider(height: 24, color: Et.cardBorder),
+              _updateRow(),
             ],
           ),
         ),
       ],
     );
+  }
+
+  // ---------- 检查更新 ----------
+
+  Widget _updateRow() {
+    return InkWell(
+      onTap: _checking ? null : _startManualCheck,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.system_update_alt,
+                size: 20, color: Et.textSecondary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('检查更新',
+                      style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                          color: Et.textPrimary)),
+                  const SizedBox(height: 2),
+                  Text(_checking ? '正在检查…' : '新版本自动提示 · 也可在此手动检查',
+                      style: TextStyle(
+                          fontSize: 12.5, color: Et.textSecondary)),
+                ],
+              ),
+            ),
+            if (_checking)
+              const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+            else
+              Icon(Icons.chevron_right, size: 20, color: Et.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startManualCheck() async {
+    // macOS：Dart 只负责触发，检查/下载/安装 UI 由 Sparkle 标准更新器接管（方案 §7.5）
+    if (Platform.isMacOS) {
+      try {
+        await const MethodChannel('eterm/update').invokeMethod('checkForUpdates');
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('检查更新失败')));
+        }
+      }
+      return;
+    }
+    if (_checking) return;
+    setState(() => _checking = true);
+    final r = await AppUpdate.instance.check(respectThrottle: false);
+    if (!mounted) return;
+    setState(() => _checking = false);
+    switch (r.status) {
+      case UpdateCheckStatus.failed:
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('检查更新失败')));
+      case UpdateCheckStatus.upToDate:
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                _version.isEmpty ? '已是最新版本' : '已是最新版本 v$_version')));
+      case UpdateCheckStatus.newer:
+        showUpdateInstallDialog(context, r.info!);
+    }
   }
 
   // ---------- 修改密码 ----------
@@ -574,6 +659,274 @@ class _FontSizeSlider extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+// ---------- 检查更新流程（Android/Windows Dart 状态机，自动更新方案 §5.2/§5.3） ----------
+
+/// 启动静默检查（_Boot 进入主壳后调用）：仅 Android/Windows、24h 节流；
+/// 发现新版本用非模态 SnackBar（更新 action 打开同一安装对话框），其余一律静默。
+Future<void> startupSilentUpdateCheck() async {
+  if (!AppUpdate.instance.isSupported) return;
+  final r = await AppUpdate.instance.check(); // respectThrottle 默认 true
+  if (r.status != UpdateCheckStatus.newer || r.info == null) return;
+  // 让主壳先落位，SnackBar 不叠在引导页上
+  await Future<void>.delayed(const Duration(seconds: 2));
+  final ctx = updateRootNavigatorKey.currentContext;
+  if (ctx == null || !ctx.mounted) return;
+  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+    content: Text('发现新版本 v${r.info!.version}'),
+    action: SnackBarAction(
+        label: '更新', onPressed: () => showUpdateInstallDialog(ctx, r.info!)),
+  ));
+}
+
+/// 「下载并安装」对话框是否已开着（启动 SnackBar action 与手动入口防双开，评审 P3-9）。
+bool _updateDialogOpen = false;
+
+/// 打开「下载并安装」对话框（启动 SnackBar action 复用同一入口）。
+/// 同时挂上 Android 原生安装结果回传：session commit 后对话框可能已关闭，
+/// 经根导航 Key 出 SnackBar（自动更新方案 §6.2 Receiver）。
+void showUpdateInstallDialog(BuildContext context, UpdateInfo info) {
+  if (_updateDialogOpen) return;
+  _updateDialogOpen = true;
+  AppUpdate.onAndroidInstallStatus = (code, message) {
+    // PackageInstaller 状态码：0=SUCCESS 3=ABORTED（用户主动取消，评审 P3-7）
+    final text = switch (code) {
+      0 => '更新安装完成',
+      3 => '安装已取消',
+      _ => '安装失败: $message',
+    };
+    if (code == 0) {
+      // 安装成功清理 update 目录（方案 §12：防旧包累积）
+      unawaited(AppUpdate.instance.cleanupAfterInstall());
+    }
+    final ctx = updateRootNavigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return;
+    ScaffoldMessenger.of(ctx)
+        .showSnackBar(SnackBar(content: Text(text)));
+  };
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _UpdateInstallDialog(info: info),
+  );
+}
+
+enum _UpdatePhase { confirm, downloading, needPermission }
+
+class _UpdateInstallDialog extends StatefulWidget {
+  const _UpdateInstallDialog({required this.info});
+  final UpdateInfo info;
+
+  @override
+  State<_UpdateInstallDialog> createState() => _UpdateInstallDialogState();
+}
+
+class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
+  _UpdatePhase _phase = _UpdatePhase.confirm;
+  double? _progress; // 0..1；总长未知时 null → 不确定进度
+  String? _localPath; // 下载成功后的本地包路径（needPermission 重试安装用）
+  bool _busy = false; // 防重：确认/重试双击触发两个 session（评审 P3-8）
+  ScaffoldMessengerState? _messenger;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 先抓住 messenger：pop 之后仍要出 SnackBar（下载失败/已提交安装）
+    _messenger ??= ScaffoldMessenger.of(context);
+  }
+
+  @override
+  void dispose() {
+    _updateDialogOpen = false;
+    super.dispose();
+  }
+
+  void _cancel() {
+    AppUpdate.instance.cancelDownload();
+    Navigator.pop(context);
+  }
+
+  Future<void> _confirm() async {
+    setState(() {
+      _phase = _UpdatePhase.downloading;
+      _busy = true;
+    });
+    try {
+      _localPath = await AppUpdate.instance
+          .download(widget.info, onProgress: (received, total) {
+        if (!mounted) return;
+        setState(() => _progress =
+            (total != null && total > 0) ? (received / total).clamp(0.0, 1.0) : null);
+      });
+    } on UpdateCancelledException {
+      return; // 用户已点取消（返回键拦截/取消按钮），对话框关闭由 pop 路径负责
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _messenger?.showSnackBar(SnackBar(content: Text('下载更新失败: $e')));
+      return;
+    }
+    await _install();
+  }
+
+  Future<void> _install() async {
+    final path = _localPath;
+    if (path == null || _busy) return;
+    setState(() => _busy = true);
+    final UpdateInstallAck ack;
+    try {
+      ack = await AppUpdate.instance.install(path);
+    } catch (e) {
+      // 平台异常（bad_args/文件被占用等）：明确报错收场，不留悬挂对话框
+      if (!mounted) return;
+      Navigator.pop(context);
+      _messenger?.showSnackBar(SnackBar(content: Text('安装失败: $e')));
+      return;
+    }
+    if (!mounted) return;
+    switch (ack) {
+      case UpdateInstallAck.needPermission:
+        setState(() {
+          _phase = _UpdatePhase.needPermission;
+          _busy = false; // 授权回来重试时按钮要可用
+        });
+      case UpdateInstallAck.started:
+        Navigator.pop(context);
+        _messenger?.showSnackBar(
+            const SnackBar(content: Text('已提交系统安装，请在弹窗中确认')));
+      case UpdateInstallAck.error:
+        Navigator.pop(context);
+        _messenger?.showSnackBar(const SnackBar(content: Text('安装失败')));
+    }
+  }
+
+  /// 主按钮（确认/重试）可用性：下载中禁用，busy 期间禁用（评审 P3-8）。
+  VoidCallback? _primaryAction() {
+    switch (_phase) {
+      case _UpdatePhase.confirm:
+        return _busy ? null : _confirm;
+      case _UpdatePhase.downloading:
+        return null;
+      case _UpdatePhase.needPermission:
+        return (!_busy && _localPath != null) ? _install : null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      // 下载中拦截系统返回键/手势：先取消下载（暂存即删）再收场，
+      // 防止孤儿下载 + 后续并发写同一 part 文件（评审 P1-2）
+      canPop: _phase != _UpdatePhase.downloading,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          AppUpdate.instance.cancelDownload();
+          Navigator.pop(context);
+        }
+      },
+      child: AlertDialog(
+      backgroundColor: Et.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+          switch (_phase) {
+            _UpdatePhase.confirm => '发现新版本',
+            _UpdatePhase.downloading => '正在下载更新',
+            _UpdatePhase.needPermission => '需要安装权限',
+          },
+          style: TextStyle(
+              fontSize: 17, fontWeight: FontWeight.w700, color: Et.textPrimary)),
+      content: SizedBox(
+        width: dialogWidth(320, context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_phase == _UpdatePhase.confirm) ...[
+              Text('v${widget.info.version}（build ${widget.info.build}）',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Et.textPrimary)),
+              if (widget.info.notes.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(widget.info.notes,
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        height: 1.5,
+                        color: Et.textSecondary)),
+              ],
+              if (widget.info.size > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                    '安装包大小 ${(widget.info.size / 1048576).toStringAsFixed(1)} MB',
+                    style: TextStyle(
+                        fontSize: 12.5, color: Et.textSecondary)),
+              ],
+              if (Platform.isWindows) ...[
+                const SizedBox(height: 8),
+                Text('安装时应用会自动退出，装完自动重启。',
+                    style: TextStyle(
+                        fontSize: 12.5, color: Et.textSecondary)),
+              ],
+            ] else if (_phase == _UpdatePhase.downloading) ...[
+              LinearProgressIndicator(
+                value: _progress,
+                color: Et.accent,
+                backgroundColor: Et.cardBorder,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                  _progress == null
+                      ? '下载中…'
+                      : '下载中 ${(_progress! * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                      fontSize: 13, color: Et.textSecondary)),
+            ] else ...[
+              Text(
+                  '系统需要「安装未知应用」授权：请在设置中选择 Eterm → 允许安装未知应用，'
+                  '然后回来重试。',
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      height: 1.5,
+                      color: Et.textSecondary)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () {
+              if (_phase == _UpdatePhase.downloading) {
+                _cancel(); // 取消下载并关对话框（暂存文件即删）
+              } else {
+                Navigator.pop(context);
+              }
+            },
+            child: Text(_phase == _UpdatePhase.downloading ? '取消下载' : '取消',
+                style: TextStyle(color: Et.textSecondary))),
+        FilledButton(
+          onPressed: _primaryAction(),
+          style: FilledButton.styleFrom(
+            backgroundColor: Et.primaryBtn,
+            foregroundColor: Et.primaryBtnText,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+            minimumSize: const Size(0, 42),
+          ),
+          child: Text(switch (_phase) {
+            _UpdatePhase.confirm =>
+              Platform.isWindows ? '退出并安装' : '下载并安装',
+            _UpdatePhase.downloading => '下载中…',
+            _UpdatePhase.needPermission => '已授权，重试',
+          }),
+        ),
+      ],
+      ),
     );
   }
 }

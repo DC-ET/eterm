@@ -28,5 +28,14 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- 应用内自动更新（Sparkle 2，方案 §7.2）。SUPublicEDKey 为占位符：
+	     首次 mac 发布前必须跑 Pods/Sparkle/bin/generate_keys -x <私钥文件> 生成密钥对，
+	     并把 EdDSA 公钥写回此处（release_macos.sh 有前置校验拦截占位符）。 -->
+	<key>SUFeedURL</key>
+	<string>https://eterm.etarch.cn/updates/eterm-mac.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>__ETERM_SPARKLE_EDDSA_PUBLIC_KEY_NOT_SET__</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
 </dict>
 </plist>

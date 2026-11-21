@@ -27,3 +27,7 @@ double dialogWidth(double desired, BuildContext context) {
 /// macOS 隐藏标题栏窗口：交通灯占位宽（shell 自绘标题栏给内容行留 78px，
 /// 推入页 AppBar 的 leading 用同量级让位；+48 再保 BackButton 完整命中区）。
 const kMacTitleBarInset = 76.0;
+
+/// 根导航 Key：更新链路在无页面上下文处（启动 SnackBar / 原生安装结果回传）
+/// 触达 ScaffoldMessenger 与弹层（自动更新方案 §5.2/§6.2）。
+final updateRootNavigatorKey = GlobalKey<NavigatorState>();

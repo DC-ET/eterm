@@ -30,6 +30,9 @@ target 'Runner' do
   use_frameworks!
 
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
+  # 应用内自动更新（Sparkle 2：appcast + EdDSA；沙盒应用走 Installer XPC，方案 §7）
+  # 钉 2.x 防 3.x 大版本漂移（Podfile.lock 待 mac 机首次 pod install 收编 Sparkle 后入库）
+  pod 'Sparkle', '~> 2.6'
   target 'RunnerTests' do
     inherit! :search_paths
   end

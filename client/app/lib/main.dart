@@ -4,6 +4,7 @@
 //   无会话/探活 401：登录页。
 // Rust 侧经 frb 提供 SSH 会话、字段加解密与本地库（crate rust_lib_eterm）。
 
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:eterm/src/rust/api/local.dart' as local;
@@ -17,9 +18,11 @@ import 'services/api_client.dart';
 import 'services/realtime.dart';
 import 'services/app_state.dart';
 import 'ui/login_page.dart';
+import 'ui/settings_page.dart' show startupSilentUpdateCheck;
 import 'ui/shell.dart';
 import 'ui/terminal_gestures.dart';
 import 'ui/theme.dart';
+import 'ui/ui_utils.dart' show updateRootNavigatorKey;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,6 +56,8 @@ class EtermApp extends StatelessWidget {
         return MaterialApp(
           title: 'Eterm',
           debugShowCheckedModeBanner: false,
+          // 根导航 Key：更新链路在无页面上下文处出 SnackBar/弹层（自动更新方案 §5.2）
+          navigatorKey: updateRootNavigatorKey,
           theme: buildM3Theme(kLightPalette),
           darkTheme: buildM3Theme(kDarkPalette),
           themeMode: ThemeController.instance.materialMode,
@@ -136,6 +141,9 @@ class _BootState extends State<_Boot> {
     }
     if (!mounted) return;
     _go(ShellPage(api: api, app: app, username: username));
+    // 启动静默检查更新（仅 Android/Windows、24h 节流；发现新版出非模态 SnackBar，
+    // 自动更新方案 §5.2）。火后不管：检查失败/无更新零打扰。
+    unawaited(startupSilentUpdateCheck());
   }
 
   void _go(Widget page) {
