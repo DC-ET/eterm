@@ -112,7 +112,7 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        // 79MB 拷贝 + fsync 不能跑在主线程（MethodChannel handler 默认主线程，ANR 风险，
+        // 79MB 拷贝不能跑在主线程（MethodChannel handler 默认主线程，ANR 风险，
         // 评审 P1-1）：session 流程放单线程执行器，完成后回主线程应答（Result 必须主线程调）。
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
@@ -133,7 +133,6 @@ class MainActivity : FlutterActivity() {
                 file.inputStream().use { input ->
                     input.copyTo(out, 256 * 1024)
                     out.flush()
-                    out.fsync()
                 }
                 out.close()
 
