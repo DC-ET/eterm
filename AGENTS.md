@@ -4,7 +4,7 @@
 
 ## 目录
 
-- `server/` — 中枢服务端，**Node 22 + TypeScript + Fastify 5 + mysql2**（⚠️ 根 README 与 Makefile 中的 Go 段落是过时遗留，以本文件为准）
+- `server/` — 中枢服务端，**Node 22 + TypeScript + Fastify 5 + mysql2**（根 README/Makefile 的 typecheck/test/run/migrate/create-user 均封装 `cd server && npm run ...`）
 - `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android + Windows 桌面 + iPhone）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
 - `deploy/` — nginx/systemd/备份样例（自建部署参考；生产实例信息不入库，见本地 private-info.md）
 - `docs/` — PRD、技术方案、`eterm-发布流程.md`（改发布相关前必读）
