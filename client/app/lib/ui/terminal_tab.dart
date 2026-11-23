@@ -663,12 +663,21 @@ class _TerminalTabViewState extends State<TerminalTabView> {
 
 /// 键条重排面板入口（终端键条与设置页共用）。
 Future<void> showExtraKeysOrderSheet(BuildContext context) {
-  return showModalBottomSheet<void>(
+  // ⚠️ 勿改回 showModalBottomSheet：底部弹层贴窗口底边且高度上限 9/16，
+  // 10 个键位行高超限被切在屏幕外、桌面端无滚动条难以察觉。
+  return showDialog<void>(
     context: context,
-    backgroundColor: Et.card,
-    shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-    builder: (_) => const _ExtraKeysOrderSheet(),
+    builder: (_) => Dialog(
+      backgroundColor: Et.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 460,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+        ),
+        child: const _ExtraKeysOrderSheet(),
+      ),
+    ),
   );
 }
 

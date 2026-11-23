@@ -881,18 +881,21 @@ class _SftpDualPageState extends State<SftpDualPage> {
   }
 
   void _openQueue() {
-    showModalBottomSheet<void>(
+    // ⚠️ 勿改回 showModalBottomSheet：底部弹层贴窗口底边，队列长时列表被切在
+    // 屏幕外、桌面端无滚动条难以察觉（用户实踩）；与 app 内其他居中弹窗不一致。
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => ListenableBuilder(
-        listenable: _queue,
-        builder: (context, _) => SafeArea(
-          child: SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.55,
+      builder: (ctx) => Dialog(
+        backgroundColor: Et.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ListenableBuilder(
+          listenable: _queue,
+          builder: (context, _) => ConstrainedBox(
+            // 高度封顶 70% 屏高：队列再长也整体在屏内，超出部分列表内滚动
+            constraints: BoxConstraints(
+                maxWidth: 520, maxHeight: MediaQuery.sizeOf(ctx).height * 0.7),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
@@ -920,7 +923,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
                   ),
                 ),
                 Divider(height: 1, color: Et.cardBorder),
-                Expanded(child: _queueList()),
+                Flexible(child: _queueList()),
               ],
             ),
           ),
@@ -931,14 +934,18 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   Widget _queueList() {
     if (_queue.jobs.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无传输任务',
-          style: TextStyle(fontSize: 13, color: Et.textSecondary),
+      return SizedBox(
+        height: 140, // 固定高：Center 在 Flexible 里会填满弹窗，空队列时避免大空框
+        child: Center(
+          child: Text(
+            '暂无传输任务',
+            style: TextStyle(fontSize: 13, color: Et.textSecondary),
+          ),
         ),
       );
     }
     return ListView.builder(
+      shrinkWrap: true,
       padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: _queue.jobs.length,
       itemBuilder: (context, i) {
