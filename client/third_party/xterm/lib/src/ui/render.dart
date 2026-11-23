@@ -413,6 +413,29 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
 
+    // eterm 补丁（选中文字消失）：上游在此函数末尾（文字之后）才画选区/高亮，
+    // 不透明矩形整块盖住选中文字——eterm 主题 selection 为不透明色（如
+    // 0xFFADD6FF），选中即见蓝块不见字。改为先画选区/搜索高亮矩形、再画文字：
+    // 实色选区退居文字背景，字形以原色叠在上层（iTerm2/Termius 选区观感），
+    // 应用侧主题色保持不透明即可正常工作。副作用如实说明：带显式背景色/
+    // inverse 的单元格，其背景会盖住该格上的选区（少数 TUI 反色单元格，
+    // 本身有可辨背景色）；光标仍在最上层绘制，不受影响。
+    if (_controller.selection != null) {
+      _paintSelection(
+        canvas,
+        _controller.selection!,
+        effectFirstLine,
+        effectLastLine,
+      );
+    }
+
+    _paintHighlights(
+      canvas,
+      _controller.highlights,
+      effectFirstLine,
+      effectLastLine,
+    );
+
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
       _painter.paintLine(
         canvas,
@@ -435,22 +458,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           hasFocus: _focusNode.hasFocus,
         );
       }
-    }
-
-    _paintHighlights(
-      canvas,
-      _controller.highlights,
-      effectFirstLine,
-      effectLastLine,
-    );
-
-    if (_controller.selection != null) {
-      _paintSelection(
-        canvas,
-        _controller.selection!,
-        effectFirstLine,
-        effectLastLine,
-      );
     }
   }
 
