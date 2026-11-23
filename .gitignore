@@ -12,6 +12,10 @@ target/
 .env
 *.env.local
 deploy/eterm.env
+private-info.md
+
+# 本地 agent 工作区
+.zcode/
 
 # go
 *.test

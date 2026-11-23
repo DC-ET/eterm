@@ -1,12 +1,12 @@
 # AGENTS.md
 
-自托管的主机与凭据数据中枢（eterm）+ 多端客户端。**架构铁律：客户端与目标服务器之间走本地直连（数据面），中枢只承载元数据同步（同步面），中枢永远不出现在数据面上。** 远程：`origin = git@gitee.com:yangjiayi/eterm.git`（main）。
+自托管的主机与凭据数据中枢（eterm）+ 多端客户端。**架构铁律：客户端与目标服务器之间走本地直连（数据面），中枢只承载元数据同步（同步面），中枢永远不出现在数据面上。** 远程：`origin = git@gitee.com:yangjiayi/eterm.git`（main）、`github = git@github.com:DC-ET/eterm.git`（私有镜像，择机开源）。
 
 ## 目录
 
 - `server/` — 中枢服务端，**Node 22 + TypeScript + Fastify 5 + mysql2**（⚠️ 根 README 与 Makefile 中的 Go 段落是过时遗留，以本文件为准）
 - `client/app/` — Flutter 3.50 客户端（macOS 桌面 + Android + Windows 桌面 + iPhone）；`lib/`（Dart UI/services）+ `rust/`（Rust core：russh 0.46 SSH、rusqlite 本地库、aes-gcm 字段加密，经 flutter_rust_bridge 2.13 frb(sync) 暴露）
-- `deploy/` — nginx/systemd/备份（生产：`eterm.etarch.cn`，root@120.26.109.221，systemd 单元 `eterm`，源码 /opt/eterm）
+- `deploy/` — nginx/systemd/备份样例（自建部署参考；生产实例信息不入库，见本地 private-info.md）
 - `docs/` — PRD、技术方案、`eterm-发布流程.md`（改发布相关前必读）
 
 ## 常用命令
@@ -85,6 +85,8 @@ client\app\scripts\release_windows.ps1        # -NoUpload 本地演练；上传�
 
 ## 测试账号与环境
 
-- 中枢测试账号：`guitest` / `eterm-GuiTest-2026!`（生产 eterm.etarch.cn）
-- 测试主机：k7（120.26.109.221，root，私钥凭据已入库）；服务器 sshd `PasswordAuthentication no`
-- SSH 密钥（发布/运维）：`~/Downloads/_my-aliyun-ecs-2026.pem`（`ETERM_SSH_KEY` 可覆盖）
+> 生产/测试服务器地址、账号密码、密钥路径等敏感信息统一维护在**本地 `private-info.md`**（已 .gitignore，勿提交、勿贴文档）。
+
+- 中枢测试账号：`guitest`——密码与服务器信息见 private-info.md
+- 测试主机：k7（root，私钥凭据已入库）；服务器 sshd `PasswordAuthentication no`
+- SSH 密钥（发布/运维）：默认 `$HOME/.ssh/your-server.pem`（`ETERM_SSH_KEY` 可覆盖）

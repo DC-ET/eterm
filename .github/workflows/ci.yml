@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 密钥泄露扫描（当前树；历史全量扫描见 .gitleaks.toml 注释，作为开源前独立检查项）
+  gitleaks:
+    name: gitleaks（密钥泄露）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --no-git --redact --verbose
+
+  server:
+    name: server（typecheck + test）
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: npm ci
+        run: npm ci
+        working-directory: server
+      - name: typecheck
+        run: npm run typecheck
+        working-directory: server
+      - name: 建测试库（fixture 按测试随机建库，需 CREATE/DROP 权限）
+        run: mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS eterm_test CHARACTER SET utf8mb4"
+      - name: test
+        run: npm test
+        working-directory: server
+        env:
+          ETERM_TEST_DSN: root:root@tcp(127.0.0.1:3306)/eterm_test?parseTime=true&multiStatements=true&loc=UTC
+
+  rust:
+    name: rust core（cargo test --lib）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test --lib
+        run: cargo test --lib
+        working-directory: client/app/rust
+
+  flutter:
+    name: flutter（analyze + test）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: flutter pub get
+        run: flutter pub get
+        working-directory: client/app
+      - name: flutter analyze
+        run: flutter analyze
+        working-directory: client/app
+      - name: flutter test
+        run: flutter test
+        working-directory: client/app

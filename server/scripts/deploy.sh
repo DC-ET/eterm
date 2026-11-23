@@ -5,8 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.." # server/
 
-SERVER=root@120.26.109.221
-KEY="${ETERM_SSH_KEY:-$HOME/Downloads/_my-aliyun-ecs-2026.pem}"
+SERVER=root@YOUR_SERVER_IP
+KEY="${ETERM_SSH_KEY:-$HOME/Downloads/your-server.pem}"
 SSH="ssh -i $KEY -o BatchMode=yes -o ConnectTimeout=10"
 # -e 的值含空格，必须整体作为一个参数：用数组，别用字符串（否则 rsync 会把
 # 展开后的 -i/-o 当成自己的选项）
@@ -28,11 +28,11 @@ $SSH "$SERVER" 'chown -R eterm:eterm /opt/eterm/src /opt/eterm/migrations \
   && systemctl restart eterm && sleep 4 && systemctl is-active eterm'
 
 echo "== 4/5 healthz =="
-curl -s -m 10 https://eterm.etarch.cn/healthz && echo
+curl -s -m 10 https://hub.example.com/healthz && echo
 
 echo "== 5/5 改密码路由探针（期望 401；404 = 旧代码仍在跑）=="
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST \
-  https://eterm.etarch.cn/api/v1/auth/password \
+  https://hub.example.com/api/v1/auth/password \
   -H 'Content-Type: application/json' \
   -d '{"old_password":"x","new_password":"y"}')
 echo "HTTP ${CODE}"

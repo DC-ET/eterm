@@ -14,14 +14,14 @@
 | pubspec | 仍为 `1.0.0+1`（**任何一端都还没跑过真实脚本发布**） |
 | 生产 nginx | **无 `/updates/` location**（/updates/* 会被 proxy 给中枢 → 404） |
 | 服务端 | 11-20 出过"生产滞后三个 commit"事故（客户端改密码 404），**之后是否重新部署过需现场确认** |
-| Windows 机 | 11-21 探测发现 **pem 密钥不在 Windows 机**（`~/Downloads/_my-aliyun-ecs-2026.pem` 缺失）——Windows 发布前必须解决（任务 E） |
+| Windows 机 | 11-21 探测发现 **pem 密钥不在 Windows 机**（`~/.ssh/your-server.pem` 缺失）——Windows 发布前必须解决（任务 E） |
 | 服务器磁盘 | ~86% 紧张，产物一律覆盖同一文件，勿新增版本副本 |
 
 ## 1. mac 机环境核对
 
 ```bash
 cd <本地仓库路径> && git pull --ff-only && git log --oneline -1   # 应为 fff2d7d 或更新
-ls -la ~/Downloads/_my-aliyun-ecs-2026.pem                        # SSH 密钥（ETERM_SSH_KEY 可覆盖）
+ls -la ~/.ssh/your-server.pem                        # SSH 密钥（ETERM_SSH_KEY 可覆盖）
 flutter --version | head -1                                       # 必须 3.50.x（发布脚本会硬校验）
 python3 --version                                                 # 发布脚本生成 JSON/appcast 依赖
 ```
@@ -32,33 +32,33 @@ python3 --version                                                 # 发布脚本
 ## 2. 任务 A：服务端确认/部署
 
 ```bash
-KEY=${ETERM_SSH_KEY:-$HOME/Downloads/_my-aliyun-ecs-2026.pem}
-ssh -i "$KEY" root@120.26.109.221 'systemctl is-active eterm'    # 应为 active
+KEY=${ETERM_SSH_KEY:-$HOME/Downloads/your-server.pem}
+ssh -i "$KEY" root@YOUR_SERVER_IP 'systemctl is-active eterm'    # 应为 active
 # 干跑比对：列出生产 /opt/eterm/src 会同步的差异（无输出 = 已是最新）
-rsync -rlptD --itemize-changes --dry-run -e "ssh -i $KEY" server/src/ root@120.26.109.221:/opt/eterm/src/ | head
+rsync -rlptD --itemize-changes --dry-run -e "ssh -i $KEY" server/src/ root@YOUR_SERVER_IP:/opt/eterm/src/ | head
 ```
 
 - 有差异 → 跑 `server/scripts/deploy.sh`（自带备份/属主/重启/探针）。
-- 验证：`curl -s -o /dev/null -w '%{http_code}\n' -X POST https://eterm.etarch.cn/api/v1/auth/password` → **401 = 路由已上线**（404 = 生产还是旧代码；healthz 版本号不能判新旧，别用它）。
-- `ssh -i "$KEY" root@120.26.109.221 'journalctl -u eterm --since "5 min ago" | tail -20'` 无异常。
+- 验证：`curl -s -o /dev/null -w '%{http_code}\n' -X POST https://hub.example.com/api/v1/auth/password` → **401 = 路由已上线**（404 = 生产还是旧代码；healthz 版本号不能判新旧，别用它）。
+- `ssh -i "$KEY" root@YOUR_SERVER_IP 'journalctl -u eterm --since "5 min ago" | tail -20'` 无异常。
 
 ## 3. 任务 B：nginx `/updates/` 上线（⭐ 三端发布的共同解锁项）
 
 ```bash
-# 1) 勘察线上 conf 实际位置（仓库参考文件是 deploy/nginx-eterm.etarch.cn.conf）
-ssh -i "$KEY" root@120.26.109.221 'grep -rl "eterm.etarch.cn" /etc/nginx/ | head'
+# 1) 勘察线上 conf 实际位置（仓库参考文件是 deploy/nginx-example.conf）
+ssh -i "$KEY" root@YOUR_SERVER_IP 'grep -rl "hub.example.com" /etc/nginx/ | head'
 # 2) 比对仓库 conf 与线上实际文件（路径以上一步为准）
-scp -i "$KEY" deploy/nginx-eterm.etarch.cn.conf root@120.26.109.221:/tmp/eterm.conf.new
-ssh -i "$KEY" root@120.26.109.221 'diff /etc/nginx/conf.d/eterm.conf /tmp/eterm.conf.new'
+scp -i "$KEY" deploy/nginx-example.conf root@YOUR_SERVER_IP:/tmp/eterm.conf.new
+ssh -i "$KEY" root@YOUR_SERVER_IP 'diff /etc/nginx/conf.d/eterm.conf /tmp/eterm.conf.new'
 #    → 若线上与仓库存在历史漂移：不要直接覆盖，只把 /updates/ location 块手工并入线上 443 server 块
 #    → diff 仅差 /updates/ 段 → 覆盖并生效：
-ssh -i "$KEY" root@120.26.109.221 'cp /tmp/eterm.conf.new /etc/nginx/conf.d/eterm.conf && nginx -t && systemctl reload nginx'
+ssh -i "$KEY" root@YOUR_SERVER_IP 'cp /tmp/eterm.conf.new /etc/nginx/conf.d/eterm.conf && nginx -t && systemctl reload nginx'
 ```
 
 **验证（走客户端真实请求路径）**：
 
 ```bash
-curl -sI https://eterm.etarch.cn/updates/eterm-android.json | grep -iE 'HTTP|cache-control|strict-transport'
+curl -sI https://hub.example.com/updates/eterm-android.json | grep -iE 'HTTP|cache-control|strict-transport'
 ```
 
 - `cache-control: no-cache` **头出现 = /updates/ location 生效**（这是该 location 独有的头；404 状态无所谓——文件还没上传，路由放行即可）。
@@ -117,13 +117,13 @@ client/app/scripts/release_macos.sh                # 正式：bump → +2，上�
 
 ## 6. 任务 E：Windows 端（须 Windows 机执行，mac 侧只需完成前置）
 
-- **前提补齐**：pem 密钥不在 Windows 机（11-21 探测）——先从 mac 机把 `~/Downloads/_my-aliyun-ecs-2026.pem` 拷到 Windows 机 `C:\Users\<用户>\Downloads\`（或设 `ETERM_SSH_KEY`），否则 `release_windows.ps1` 的 scp/回读会失败。
+- **前提补齐**：pem 密钥不在 Windows 机（11-21 探测）——先从 mac 机把 `~/.ssh/your-server.pem` 拷到 Windows 机 `C:\Users\<用户>\Downloads\`（或设 `ETERM_SSH_KEY`），否则 `release_windows.ps1` 的 scp/回读会失败。
 - Windows 机：`git pull` → `client\app\scripts\release_windows.ps1`（前置校验/bump/NSIS 打包/上传/回读校验/自动 commit 全已就绪）。
 - 端到端（§11.8）：旧 setup（已装的 1.0.0+1）→ 新版发布后应用内「发现新版本」→「退出并安装」→ 应用退出 → 静默安装自动重启 → 版本变新；断网静默；篡改 JSON sha256 → 校验失败拒装删暂存；中文/含空格用户名机器走一遍。
 
 ## 7. 任务 F：稳定运行观察
 
-- [ ] `ssh root@120.26.109.221 'df -h /opt'` 磁盘余量（~86% 基线）；
+- [ ] `ssh root@YOUR_SERVER_IP 'df -h /opt'` 磁盘余量（~86% 基线）；
 - [ ] 上线初期 `journalctl -u eterm` 无异常；客户端更新检查失败不影响登录/同步/连接（设计已解耦，观察确认）；
 - [ ] Windows 机 Defender 首启无拦截；mac Gatekeeper 口径（首次右键打开）传给实际使用者；
 - [ ] EdDSA 私钥备份落位（任务 C2）后，在 [eterm-发布流程.md](../eterm-发布流程.md) 核对发布自检清单是否需要勾补。
@@ -144,7 +144,7 @@ client/app/scripts/release_macos.sh                # 正式：bump → +2，上�
 | 坑 | 说明 |
 |---|---|
 | FlutterAppDelegate 无该 selector（P0） | Flutter 3.50 的 `FlutterAppDelegate` **不再实现** `applicationDidFinishLaunching:`（生命周期转发重构进 `FlutterAppLifecycleDelegate`）；自定义 AppDelegate 里调 `super.` 会抛 unrecognized selector 且被 AppKit 吞掉，方法体后半段静默不执行 → 更新通道与 Sparkle 从未启动。已修（8c17c36），勿加回 super |
-| pod install 全挂 | CocoaPods trunk CDN（cdn.jsdelivr.net）与 GitHub 在构建机直连不可达、cdn.cocoapods.org 只有索引没 spec。解法：借生产服务器出口开 SSH SOCKS（`ssh -f -N -D 127.0.0.1:1080 root@120.26.109.221 -i <pem>`），pod/构建时 `export all_proxy=socks5h://127.0.0.1:1080` |
+| pod install 全挂 | CocoaPods trunk CDN（cdn.jsdelivr.net）与 GitHub 在构建机直连不可达、cdn.cocoapods.org 只有索引没 spec。解法：借生产服务器出口开 SSH SOCKS（`ssh -f -N -D 127.0.0.1:1080 root@YOUR_SERVER_IP -i <pem>`），pod/构建时 `export all_proxy=socks5h://127.0.0.1:1080` |
 | generate_appcast 输出名 | Sparkle 2.9 按归档名派生 appcast 文件名（`eterm-mac.zip`→`eterm-mac.xml`），不是固定 `appcast.xml`；release_macos.sh 已改 glob 取产物 |
 | Kotlin 首编幻觉 API | `OutputStream.fsync()` 不存在（Windows 机 gradle 损坏从未真编译）；PackageInstaller 流程 write→flush→close→commit 自带校验。已修（36c2889）。**Swift/Kotlin 原生代码在任何新机首次 `flutter build` 都是有效门禁** |
 | generate_keys 两步 | `generate_keys`（无参）先生成入钥匙串，`-x` 只导出不生成（交接文档旧写法一步到位是错的，发布流程文档已勘误） |

@@ -133,7 +133,7 @@ Windows 化的主要工作是环境与打包；iOS 在代码之外有**三条产
 └─────────────────────────────┘                          └────────────────────────────┘
 
 数据面（不变）：iPhone ──SSH/SFTP 直连──► 目标服务器
-同步面（不变）：iPhone ──HTTPS/WSS──► 中枢 eterm.etarch.cn（元数据同步）
+同步面（不变）：iPhone ──HTTPS/WSS──► 中枢 hub.example.com（元数据同步）
 分发面（新）： mac 构建机 ──IPA──► TestFlight（苹果托管；不经自有服务器）
 ```
 

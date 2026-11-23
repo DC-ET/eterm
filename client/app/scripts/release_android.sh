@@ -8,11 +8,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.." # client/app
 
-SERVER=root@120.26.109.221
-KEY="${ETERM_SSH_KEY:-$HOME/Downloads/_my-aliyun-ecs-2026.pem}"
-REMOTE_DIR=/opt/mao-data/uploads/eterm
+# 发布目标全部走环境变量（仓库内不落真实服务器/IP/域名；fork 部署自行导出）：
+#   ETERM_SERVER / ETERM_SSH_KEY / ETERM_REMOTE_DIR / ETERM_UPDATE_BASE_URL
+SERVER="${ETERM_SERVER:-root@YOUR_SERVER_IP}"
+KEY="${ETERM_SSH_KEY:-$HOME/.ssh/your-server.pem}"
+REMOTE_DIR="${ETERM_REMOTE_DIR:-/opt/mao-data/uploads/eterm}"
 APK=eterm-android.apk
-BASE_URL=https://eterm.etarch.cn/updates
+# 更新元数据基址：元数据 JSON 的下载地址与客户端 --dart-define 同源，必须显式提供
+BASE_URL="${ETERM_UPDATE_BASE_URL:-}"
 
 NOTES_ARG=""
 VERSIONED=0
@@ -25,6 +28,12 @@ for arg in "$@"; do
     *) echo "未知参数: $arg"; exit 1 ;;
   esac
 done
+
+if [[ -z "$BASE_URL" ]]; then
+  echo "❌ 必须导出 ETERM_UPDATE_BASE_URL（如 https://hub.example.com/updates）："
+  echo "   更新元数据 JSON 的下载地址与客户端 --dart-define 都取自此值"
+  exit 1
+fi
 
 # 0. 前置校验（§9.1：异机 bump 必须基于最新 pubspec，否则跨机撞号）
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -55,7 +64,7 @@ BUILD=${FULLVER##*+}
 echo "== bump build → $FULLVER =="
 
 # 2. 构建（JAVA_HOME 钉 JDK17：GraalVM 的 jlink 过不了 AGP JdkImageTransform，见 AGENTS.md）
-flutter build apk --release
+flutter build apk --release --dart-define=ETERM_UPDATE_BASE_URL="$BASE_URL"
 ART=build/app/outputs/flutter-apk/app-release.apk
 if [[ ! -f "$ART" ]]; then
   echo "❌ 构建产物缺失 $ART"

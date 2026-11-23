@@ -163,7 +163,7 @@ void main() {
     app.debugSetEntities(sshKeyEntity('k1', 'ka'));
     await app.addHost(
       label: 'k7',
-      hostname: '120.26.109.221',
+      hostname: '203.0.113.10',
       port: 22,
       username: 'root',
       usePassword: false,
@@ -186,7 +186,7 @@ void main() {
     final app = AppState(api: api, inspectPem: fakeInspect);
     await app.addHost(
       label: 'k7',
-      hostname: '120.26.109.221',
+      hostname: '203.0.113.10',
       port: 22,
       username: 'root',
       usePassword: false,

@@ -1012,7 +1012,7 @@ mod tests {
     }
 
     /// k7 真机端到端（默认跳过；设 ETERM_SFTP_HOST 才跑）：
-    /// ETERM_SFTP_HOST=120.26.109.221 ETERM_SFTP_KEY=<PEM 路径> \
+    /// ETERM_SFTP_HOST=YOUR_SERVER_IP ETERM_SFTP_KEY=<PEM 路径> \
     ///   cargo test --lib sftp_ -- --test-threads=1
     /// （--test-threads=1：store 用全局 DB 单例，与其他测试隔离运行）
     /// 覆盖：连接 + TOFU + realpath + 列目录 + mkdir + 上传/下载回环比对 + 清理。

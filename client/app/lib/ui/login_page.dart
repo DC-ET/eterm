@@ -23,7 +23,8 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _form = GlobalKey<FormState>();
-  final _server = TextEditingController(text: 'https://eterm.etarch.cn');
+  // 不预填任何默认中枢地址：fork/自建部署应显式填写自己的服务端
+  final _server = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
@@ -142,6 +143,7 @@ class _LoginPageState extends State<LoginPage> {
                         TextStyle(fontSize: 13, color: Et.textSecondary)),
                 const SizedBox(height: 26),
                 _field(_server, '服务器地址',
+                    hint: 'https://hub.example.com',
                     textInputAction: TextInputAction.next,
                     validator: (v) {
                       final parsed = Uri.tryParse(v?.trim() ?? '');
@@ -213,6 +215,7 @@ class _LoginPageState extends State<LoginPage> {
     TextEditingController c,
     String label, {
     bool obscure = false,
+    String? hint,
     String? Function(String?)? validator,
     Widget? suffix,
     TextInputAction? textInputAction,
@@ -228,6 +231,7 @@ class _LoginPageState extends State<LoginPage> {
         style: TextStyle(fontSize: 14, color: Et.textPrimary),
         decoration: InputDecoration(
           labelText: label,
+          hintText: hint,
           labelStyle: TextStyle(fontSize: 13, color: Et.textSecondary),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           contentPadding:

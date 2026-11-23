@@ -142,7 +142,7 @@
 └─────────────────────┘                                    └──────────────────────────┘
 
 数据面（不变）：客户端 ──SSH/SFTP 直连──► 目标服务器
-同步面（不变）：客户端 ──HTTPS──► 中枢 eterm.etarch.cn（元数据同步 + /updates/ 静态分发）
+同步面（不变）：客户端 ──HTTPS──► 中枢 hub.example.com（元数据同步 + /updates/ 静态分发）
 ```
 
 架构铁律照旧：Windows 版的 SSH/SFTP/端口转发全走 Rust 数据面直连目标服务器，中枢只承载同步与更新元数据分发，**不出现在数据面上**。
@@ -277,7 +277,7 @@ InstallDir "$LOCALAPPDATA\Programs\Eterm"
 #    产物 build\windows\x64\runner\Release\
 # 3. makensis installer\eterm.nsis → eterm-windows-setup.exe
 # 4. Get-FileHash -Algorithm SHA256
-# 5. scp 覆盖上传 setup + eterm-windows.json → root@120.26.109.221:/opt/mao-data/uploads/eterm/
+# 5. scp 覆盖上传 setup + eterm-windows.json → root@YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/
 #    （磁盘紧张约定：覆盖同一文件，勿新增版本副本）
 # 6. curl 公网回读 JSON，校验 version/build 与本次一致（对齐 release_android.sh 校验模式）
 ```

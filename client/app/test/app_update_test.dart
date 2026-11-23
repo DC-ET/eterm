@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 UpdateInfo _info({int build = 3, String version = '1.0.2'}) => UpdateInfo(
       version: version,
       build: build,
-      url: 'https://eterm.etarch.cn/updates/eterm-android.apk',
+      url: 'https://hub.example.com/updates/eterm-android.apk',
       sha256: 'a' * 64,
     );
 

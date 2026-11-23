@@ -15,10 +15,13 @@ param([switch]$NoUpload)
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)  # client/app
 
-$Server    = "root@120.26.109.221"
-$RemoteDir = "/opt/mao-data/uploads/eterm"
-$BaseUrl   = "https://eterm.etarch.cn/updates"
-$Key       = if ($env:ETERM_SSH_KEY) { $env:ETERM_SSH_KEY } else { "$HOME\Downloads\_my-aliyun-ecs-2026.pem" }
+# 发布目标全部走环境变量（仓库内不落真实服务器/IP/域名；fork 部署自行导出）：
+#   ETERM_SERVER / ETERM_SSH_KEY / ETERM_REMOTE_DIR / ETERM_UPDATE_BASE_URL
+$Server    = if ($env:ETERM_SERVER) { $env:ETERM_SERVER } else { "root@YOUR_SERVER_IP" }
+$RemoteDir = if ($env:ETERM_REMOTE_DIR) { $env:ETERM_REMOTE_DIR } else { "/opt/mao-data/uploads/eterm" }
+# 更新元数据基址：eterm-windows.json 的下载地址与客户端 --dart-define 同源，必须显式提供
+$BaseUrl   = if ($env:ETERM_UPDATE_BASE_URL) { $env:ETERM_UPDATE_BASE_URL } else { "" }
+$Key       = if ($env:ETERM_SSH_KEY) { $env:ETERM_SSH_KEY } else { "$HOME\.ssh\your-server.pem" }
 
 # 镜像（与 release_android.sh 同口径）
 $env:PUB_HOSTED_URL           = "https://pub.flutter-io.cn"
@@ -34,6 +37,10 @@ function ReadUtf8([string]$path) {
 }
 function NoBomWrite([string]$path, [string]$text) {
   [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $false))
+}
+
+if (-not $BaseUrl) {
+  Fail "必须设置 ETERM_UPDATE_BASE_URL（如 https://hub.example.com/updates）：更新元数据 JSON 的下载地址与客户端 --dart-define 都取自此值"
 }
 
 # 0. 前置校验（§7.2：异机 bump 必须基于最新 pubspec，否则可能撞号）
@@ -64,7 +71,7 @@ NoBomWrite (Join-Path (Get-Location) "pubspec.yaml") $updated
 Write-Host "== bump build → $ver+$build =="
 
 # 2. 构建（产物 build\windows\x64\runner\Release\）
-flutter build windows --release
+flutter build windows --release --dart-define=ETERM_UPDATE_BASE_URL="$BaseUrl"
 CheckLastExit "flutter build windows"
 $releaseDir = "build\windows\x64\runner\Release"
 if (-not (Test-Path (Join-Path $releaseDir "Eterm.exe"))) { Fail "构建产物缺失 Eterm.exe" }

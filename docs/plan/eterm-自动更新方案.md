@@ -16,7 +16,7 @@
 
 | # | 问题 | 证据 | 影响 |
 |---|---|---|---|
-| P1 | **安装包没有公开下载地址** | `deploy/nginx-eterm.etarch.cn.conf` 把所有路径 `proxy_pass` 给中枢（127.0.0.1:8220），`/opt/mao-data/uploads/eterm/` 未对外暴露；安卓包一直靠微信/网盘手动传，Mac 包则只存在于本机 `build/` 目录 | 自动更新需要登录前可达的公网 HTTPS 分发点 |
+| P1 | **安装包没有公开下载地址** | `deploy/nginx-example.conf` 把所有路径 `proxy_pass` 给中枢（127.0.0.1:8220），`/opt/mao-data/uploads/eterm/` 未对外暴露；安卓包一直靠微信/网盘手动传，Mac 包则只存在于本机 `build/` 目录 | 自动更新需要登录前可达的公网 HTTPS 分发点 |
 | P2 | **Android targetSdk 是现代版本** | `client/app/android/app/build.gradle.kts` 用 `flutter.targetSdkVersion`，Flutter 3.50 默认为 **36**（`flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt:34`） | 老的 `ACTION_VIEW` + `application/vnd.android.package-archive` 静默安装路径在高版本不可靠，必须走 `PackageInstaller` session API |
 | P3 | **versionCode 写死** | `client/app/pubspec.yaml:5` 为 `version: 1.0.0+1`，自 11-14 起未变 | Android 拒绝 versionCode 不增长的安装；macOS 的 `CFBundleVersion` 同样取自该 build 号（Sparkle 的 `sparkle:version` 必须递增）；Windows 的 exe 版本资源与 NSIS `-DVERSION` 亦同源。**三端发布脚本必须各自自动 +1，且共用一个 pubspec 事实源** |
 | P4 | **macOS 应用是沙盒化的** | `macos/Runner/DebugProfile.entitlements` 与 `Release.entitlements` 均有 `com.apple.security.app-sandbox = true` | Sparkle 1 不支持沙盒；Sparkle 2 可以，但必须启用框架内的 Installer XPC 服务并加 mach-lookup 例外 entitlement（见 §8） |
@@ -78,7 +78,7 @@
 ## 3. 总体架构
 
 ```
-┌─────────────────────────── 服务器（120.26.109.221）────────────────────────────┐
+┌─────────────────────────── 服务器（YOUR_SERVER_IP）────────────────────────────┐
 │  nginx (443)                                                                   │
 │   location /updates/  ──alias──►  /opt/mao-data/uploads/eterm/                 │
 │        ├── eterm-android.json / .apk  { version, build, sha256, url, ... }      │ ← Android 元数据 + 包
@@ -110,7 +110,7 @@
 
 ## 4. 分发基础设施（nginx，三端共用）
 
-`deploy/nginx-eterm.etarch.cn.conf` 的 443 server 块内，在 `location /` **之前**加（前缀 location 优先于 `/`）：
+`deploy/nginx-example.conf` 的 443 server 块内，在 `location /` **之前**加（前缀 location 优先于 `/`）：
 
 ```nginx
 # 客户端自动更新分发：版本元数据 + 安装包静态可读（无鉴权，登录前/中枢宕机时也能检查）
@@ -128,7 +128,7 @@ location /updates/ {
 
 线上生效步骤：改 `/etc/nginx/` 下对应 conf → `nginx -t` → `systemctl reload nginx`。80 端口的 `return 301 https://...` 已覆盖 `/updates/`，无需额外配置。
 
-> **v1.2 前置依赖警示**：该 location 已不只是「更新功能的前置」——Windows 发布脚本 `release_windows.ps1` 第 6 步会 `curl https://eterm.etarch.cn/updates/eterm-windows.json` 公网回读校验，在 `/updates/` 未生效前该请求被 `location /` proxy 给中枢 → 404 → 发布中断。即 nginx 改动是 **Windows 真实发布的阻塞前置**（`-NoUpload` 本地演练不受影响，见 §9.5）。
+> **v1.2 前置依赖警示**：该 location 已不只是「更新功能的前置」——Windows 发布脚本 `release_windows.ps1` 第 6 步会 `curl https://hub.example.com/updates/eterm-windows.json` 公网回读校验，在 `/updates/` 未生效前该请求被 `location /` proxy 给中枢 → 404 → 发布中断。即 nginx 改动是 **Windows 真实发布的阻塞前置**（`-NoUpload` 本地演练不受影响，见 §9.5）。
 
 ### 4.1 Android 元数据 schema
 
@@ -138,7 +138,7 @@ location /updates/ {
 {
   "version": "1.0.2",
   "build": 3,
-  "url": "https://eterm.etarch.cn/updates/eterm-android.apk",
+  "url": "https://hub.example.com/updates/eterm-android.apk",
   "sha256": "<APK 完整 sha256>",
   "size": 79075407,
   "published_at": "2026-11-20T13:00:00+08:00",
@@ -169,7 +169,7 @@ location /updates/ {
       <pubDate>Thu, 20 Nov 2026 05:00:00 +0000</pubDate>
       <sparkle:version>3</sparkle:version>
       <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
-      <enclosure url="https://eterm.etarch.cn/updates/eterm-mac.zip"
+      <enclosure url="https://hub.example.com/updates/eterm-mac.zip"
                  length="28411520" type="application/octet-stream"
                  sparkle:edSignature="<EdDSA 签名>"/>
     </item>
@@ -292,7 +292,7 @@ pod 'Sparkle'
 
 | 键 | 值 | 说明 |
 |---|---|---|
-| `SUFeedURL` | `https://eterm.etarch.cn/updates/eterm-mac.xml` | appcast 地址；Sparkle 按此自动检查 |
+| `SUFeedURL` | `https://hub.example.com/updates/eterm-mac.xml` | appcast 地址；Sparkle 按此自动检查 |
 | `SUPublicEDKey` | `<EdDSA 公钥>` | 由 `generate_keys` 生成；每个分发包都要内嵌 |
 | `SUEnableInstallerLauncherService` | `YES` | **沙盒应用必需**：让 Installer XPC 越出沙盒替换 .app |
 
@@ -373,7 +373,7 @@ Installer XPC 替换的是**当前运行的 `.app` 所在路径**：
 # 3. ditto -c -k --sequesterRsrc --keepParent Eterm.app eterm-mac.zip
 # 4. 在仅含该 zip 的暂存目录跑 Sparkle 的 generate_appcast，签名私钥走文件（不落钥匙串，§9.3）：
 #      generate_appcast --ed-key-file "$ETERM_SPARKLE_PRIVATE_KEY" \
-#        --download-url-prefix https://eterm.etarch.cn/updates/ <暂存目录>
+#        --download-url-prefix https://hub.example.com/updates/ <暂存目录>
 #    → 产物默认名 appcast.xml（内含 edSignature/length/version），脚本重命名为 eterm-mac.xml
 #      （暂存目录只放新 zip，避免顺带生成 delta 更新）
 # 4.5 用 python3 往 item 注入 <description>（内容取 git log -1 --pretty=%s，转义交给
@@ -427,7 +427,7 @@ Windows 发布流程已随 Windows 客户端落地（427860b），相对本方�
 
 ## 11. 上线顺序与端到端验证
 
-1. **nginx conf 先行**入库（`deploy/nginx-eterm.etarch.cn.conf`）→ 线上 `nginx -t` + reload → `curl` 验证 `/updates/` 可回读。注意：这一步同时是 **Windows 发布脚本的前置**（release_windows.ps1 公网回读校验在 `/updates/` 未生效前必然失败，§9.5）。
+1. **nginx conf 先行**入库（`deploy/nginx-example.conf`）→ 线上 `nginx -t` + reload → `curl` 验证 `/updates/` 可回读。注意：这一步同时是 **Windows 发布脚本的前置**（release_windows.ps1 公网回读校验在 `/updates/` 未生效前必然失败，§9.5）。
 2. 抽 `bump_build` helper（§9.1 三端口径）；改 `release_android.sh`（补前置校验 + bump + JSON 生成上传 + 上传后 commit/push + 回读校验），新增 `release_macos.sh` → **先不发布**。
 3. 实现客户端全部代码（Android Dart/原生 + Windows Dart 分支 §5.3 + macOS Sparkle 集成 + 共用 helper），过门禁。
 4. **先发 macOS**（自测成本低）：跑 `release_macos.sh` → 发布 zip + appcast。
@@ -480,7 +480,7 @@ Windows 发布流程已随 Windows 客户端落地（427860b），相对本方�
 
 | 文件 | 动作 | 端 |
 |---|---|---|
-| `deploy/nginx-eterm.etarch.cn.conf` | 改（加 `/updates/` location，含安全头重复声明 §4；Windows 发布阻塞前置 §9.5） | 三端共用 |
+| `deploy/nginx-example.conf` | 改（加 `/updates/` location，含安全头重复声明 §4；Windows 发布阻塞前置 §9.5） | 三端共用 |
 | `client/app/scripts/lib_version.sh` | 新增（`bump_build` helper，供 mac 侧两脚本 source；Windows 内嵌同语义 bump §9.1） | Android+macOS |
 | `client/app/scripts/release_android.sh` | 改（前置校验 + 调共用 bump + JSON 生成上传 + 回读校验 + 上传后 commit/push） | Android |
 | `client/app/scripts/release_macos.sh` | 新增（build → zip → generate_appcast → 上传 → 校验 → commit/push） | macOS |

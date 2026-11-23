@@ -335,7 +335,7 @@ CREATE TABLE audit_events (
 
 升级流程：scp 新二进制 → `eterm migrate` → systemd 重启；迁移必须向后兼容一个版本（支持回滚）。
 
-**实际部署记录（2026-11-14，M0 出口）**：`https://eterm.etarch.cn`（Let's Encrypt，nginx 终结 TLS + WS 升级头，配置归档于 `deploy/nginx-eterm.etarch.cn.conf`）→ 反代 `127.0.0.1:8220`；eterm 原生 TLS（`ETERM_TLS_CERT/KEY`）保留为无反代场景备选，`Caddyfile` 保留为域名化替代方案。全链路实测通过：healthz / 登录 / `me`（真实 CA 链）、审计 IP 记录 XFF 真实来源、WebSocket wss 过 nginx 握手成功。DB 账号 `eterm_app@localhost`，密码仅存服务器 `/root/.eterm-db-pw`。
+**实际部署记录（2026-11-14，M0 出口）**：`https://hub.example.com`（Let's Encrypt，nginx 终结 TLS + WS 升级头，配置归档于 `deploy/nginx-example.conf`）→ 反代 `127.0.0.1:8220`；eterm 原生 TLS（`ETERM_TLS_CERT/KEY`）保留为无反代场景备选，`Caddyfile` 保留为域名化替代方案。全链路实测通过：healthz / 登录 / `me`（真实 CA 链）、审计 IP 记录 XFF 真实来源、WebSocket wss 过 nginx 握手成功。DB 账号 `<db_user>@localhost`，密码仅存服务器本地受保护文件（0600，不入库）。
 
 ---
 

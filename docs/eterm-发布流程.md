@@ -4,7 +4,7 @@
 
 ### 约定（2026-11-15 起）
 
-- **上传位置**：服务器 `120.26.109.221:/opt/mao-data/uploads/eterm/`
+- **上传位置**：服务器 `YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/`
 - **常规更新**：每次**覆盖**同一个文件 `eterm-android.apk`（避免占满服务器磁盘，当前磁盘余量 ~7G）
 - **大版本更新**：另存一份带版本号的副本 `eterm-android-vX.Y.Z.apk`（pubspec 的 version 前两段变化时视为大版本，人工判断）
 - 产物为 release 签名（debug key，直接可装）；三 ABI 合一（arm64/armv7/x86_64）
@@ -22,16 +22,16 @@ client/app/scripts/release_android.sh --notes="自定义更新说明"
 唯一事实源）→ flutter build apk --release → python3 生成 eterm-android.json（json.dumps 序列化，
 notes 取 git log 标题）→ scp 覆盖上传（APK + JSON）→ 远端 sha256 校验 → curl 公网回读 JSON 校验
 version/build → **自动 commit+push pubspec bump**（防跨机撞号）。
-SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 覆盖。
+SSH 密钥默认 `~/.ssh/your-server.pem`，可用 `ETERM_SSH_KEY` 覆盖。
 
 ### 手动流程（等价）
 
 ```bash
 cd client/app
 flutter build apk --release                       # 产物 build/app/outputs/flutter-apk/app-release.apk
-scp -i ~/Downloads/_my-aliyun-ecs-2026.pem \
+scp -i ~/.ssh/your-server.pem \
   build/app/outputs/flutter-apk/app-release.apk \
-  root@120.26.109.221:/opt/mao-data/uploads/eterm/eterm-android.apk
+  root@YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/eterm-android.apk
 ```
 
 ### 手机安装
@@ -51,7 +51,7 @@ apk 传到手机（微信文件传输助手 / 网盘 / USB 拷贝）→ 点开�
 
 ### 约定（2026-11-21 起，D11）
 
-- **上传位置**：同 Android，`120.26.109.221:/opt/mao-data/uploads/eterm/`
+- **上传位置**：同 Android，`YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/`
 - **常规更新**：覆盖同一文件 `eterm-windows-setup.exe`（磁盘紧张约定）；不新增版本副本
 - 产物：NSIS per-user 安装器（免 UAC，装 `%LOCALAPPDATA%\Programs\Eterm`）；exe 名 `Eterm.exe`（D13）
 - `eterm-windows.json`（自动更新元数据）随包上传；应用内更新（M4）已随自动更新方案落地
@@ -73,7 +73,7 @@ client\app\scripts\release_windows.ps1 -NoUpload  # 本地演练：跳过上传/
 makensis installer\eterm.nsis（-DVERSION 带 build 号）→ sha256 → scp 覆盖上传（setup + json）→
 curl 回读 JSON 校验版本 + ssh sha256sum 双端校验 → **自动 commit+push pubspec bump**
 （build 号唯一事实源，防跨机撞号）。
-SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 覆盖。
+SSH 密钥默认 `~/.ssh/your-server.pem`，可用 `ETERM_SSH_KEY` 覆盖。
 安装包内含 vc_redist.x64.exe 兜底：目标机缺 VC++ 运行库（MSVCP140/VCRUNTIME140）时安装器
 引导 UAC 提权安装，避免首启报缺 dll。
 
@@ -84,7 +84,7 @@ cd client\app
 flutter build windows --release                    # 产物 build\windows\x64\runner\Release\
 Push-Location installer; makensis -DVERSION="1.0.0" eterm.nsis; Pop-Location   # → build\eterm-windows-setup.exe
 Get-FileHash build\eterm-windows-setup.exe -Algorithm SHA256
-scp -i $env:ETERM_SSH_KEY build\eterm-windows-setup.exe root@120.26.109.221:/opt/mao-data/uploads/eterm/eterm-windows-setup.exe
+scp -i $env:ETERM_SSH_KEY build\eterm-windows-setup.exe root@YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/eterm-windows-setup.exe
 ```
 
 ### 用户安装/更新
@@ -103,7 +103,7 @@ scp -i $env:ETERM_SSH_KEY build\eterm-windows-setup.exe root@120.26.109.221:/opt
 
 ### 约定（2026-11-21 起，自动更新方案 §9.2/§9.3）
 
-- **上传位置**：同 Android/Windows，`120.26.109.221:/opt/mao-data/uploads/eterm/`
+- **上传位置**：同 Android/Windows，`YOUR_SERVER_IP:/opt/mao-data/uploads/eterm/`
 - **常规更新**：覆盖同一文件 `eterm-mac.zip` + `eterm-mac.xml`（磁盘紧张约定）
 - 产物：zip 内含 `Eterm.app`（ditto 打包）+ Sparkle appcast（EdDSA 签名）；应用本身保持 ad-hoc 签名，首次安装需右键打开（Gatekeeper）
 - 应用内更新走 Sparkle 2 标准界面（启动自动检查 + 设置页手动入口）；沙盒 + Installer XPC 集成见方案 §7/§8
@@ -122,7 +122,7 @@ pubspec build 号 +1（共用 `lib_version.sh`）→ flutter build macos --relea
 Sparkle `generate_appcast`（`--ed-key-file` 私钥走文件，暂存目录只放新 zip 不生成 delta）→
 python3 注入 `<description>` → scp 覆盖上传 → 远端 sha256 校验 + curl 回读 appcast 校验
 sparkle:version → 自动 commit+push pubspec bump。
-SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 覆盖。
+SSH 密钥默认 `~/.ssh/your-server.pem`，可用 `ETERM_SSH_KEY` 覆盖。
 
 ### EdDSA 私钥管理（一次性，§9.3）
 
@@ -169,13 +169,13 @@ client/app/scripts/release_ios.sh --no-upload   # 本地演练：--no-codesign �
 
 ## 更新分发基础设施（nginx `/updates/`，三端共用）
 
-- `deploy/nginx-eterm.etarch.cn.conf` 的 443 server 块把 `/updates/` alias 到
+- `deploy/nginx-example.conf` 的 443 server 块把 `/updates/` alias 到
   `/opt/mao-data/uploads/eterm/`（无鉴权静态分发；location 内重复声明了三条安全响应头——
   nginx 的 add_header 不继承规则，见自动更新方案 §4）
 - 该 location 是三个发布脚本公网回读校验的**运行前置**：未生效时
   `release_windows.ps1`/`release_android.sh`/`release_macos.sh` 的回读步骤都会失败
 - 线上生效：改服务器 `/etc/nginx/` 下对应 conf → `nginx -t` → `systemctl reload nginx` →
-  `curl -I https://eterm.etarch.cn/updates/eterm-android.json` 验证（404 也算通：路由已放行，只是文件未上传）
+  `curl -I https://hub.example.com/updates/eterm-android.json` 验证（404 也算通：路由已放行，只是文件未上传）
 
 ## 服务端部署（Node/TS）
 
@@ -208,29 +208,29 @@ server/scripts/deploy.sh            # 备份 → rsync src+migrations → 改属
 
 ```bash
 # 1. 备份（回滚用）
-ssh root@120.26.109.221 'tar czf /opt/eterm-src-backup-$(date +%Y%m%d).tgz -C /opt/eterm src migrations'
+ssh root@YOUR_SERVER_IP 'tar czf /opt/eterm-src-backup-$(date +%Y%m%d).tgz -C /opt/eterm src migrations'
 # 2. 同步源码（package.json/lock 有变更时才需要在服务器 npm ci）
-rsync -rlptD --delete -e "ssh -i $ETERM_SSH_KEY" server/src/       root@120.26.109.221:/opt/eterm/src/
-rsync -rlptD --delete -e "ssh -i $ETERM_SSH_KEY" server/migrations/ root@120.26.109.221:/opt/eterm/migrations/
+rsync -rlptD --delete -e "ssh -i $ETERM_SSH_KEY" server/src/       root@YOUR_SERVER_IP:/opt/eterm/src/
+rsync -rlptD --delete -e "ssh -i $ETERM_SSH_KEY" server/migrations/ root@YOUR_SERVER_IP:/opt/eterm/migrations/
 # 3. 属主（服务用户）+ 重启
-ssh root@120.26.109.221 'chown -R eterm:eterm /opt/eterm/src /opt/eterm/migrations && systemctl restart eterm'
+ssh root@YOUR_SERVER_IP 'chown -R eterm:eterm /opt/eterm/src /opt/eterm/migrations && systemctl restart eterm'
 ```
 
-SSH 密钥默认 `~/Downloads/_my-aliyun-ecs-2026.pem`，可用 `ETERM_SSH_KEY` 覆盖。
+SSH 密钥默认 `~/.ssh/your-server.pem`，可用 `ETERM_SSH_KEY` 覆盖。
 
 ### 部署后验证
 
 - [ ] `systemctl is-active eterm` → `active`
-- [ ] `curl https://eterm.etarch.cn/healthz` → `{"status":"ok","version":"0.1.0-ts"}`
+- [ ] `curl https://hub.example.com/healthz` → `{"status":"ok","version":"0.1.0-ts"}`
       （版本号是源码硬编码，**不能用来判断新旧**）
-- [ ] 新路由探针：`curl -o /dev/null -w '%{http_code}' -X POST https://eterm.etarch.cn/api/v1/auth/password`
+- [ ] 新路由探针：`curl -o /dev/null -w '%{http_code}' -X POST https://hub.example.com/api/v1/auth/password`
       → **401 = 路由已上线**；404 = 部署的还是旧代码
 - [ ] `journalctl -u eterm --since "3 min ago"` 无异常（迁移/数据库就绪/listen）
 
 ### 回滚
 
 ```bash
-ssh root@120.26.109.221 'cd /opt/eterm && tar xzf /opt/eterm-src-backup-<日期>.tgz \
+ssh root@YOUR_SERVER_IP 'cd /opt/eterm && tar xzf /opt/eterm-src-backup-<日期>.tgz \
   && chown -R eterm:eterm src migrations && systemctl restart eterm'
 ```
 

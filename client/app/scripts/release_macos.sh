@@ -7,15 +7,30 @@
 set -euo pipefail
 cd "$(dirname "$0")/.." # client/app
 
-SERVER=root@120.26.109.221
-KEY="${ETERM_SSH_KEY:-$HOME/Downloads/_my-aliyun-ecs-2026.pem}"
-REMOTE_DIR=/opt/mao-data/uploads/eterm
+# 发布目标全部走环境变量（仓库内不落真实服务器/IP/域名；fork 部署自行导出）：
+#   ETERM_SERVER / ETERM_SSH_KEY / ETERM_REMOTE_DIR / ETERM_UPDATE_BASE_URL / ETERM_SPARKLE_PRIVATE_KEY
+SERVER="${ETERM_SERVER:-root@YOUR_SERVER_IP}"
+KEY="${ETERM_SSH_KEY:-$HOME/.ssh/your-server.pem}"
+REMOTE_DIR="${ETERM_REMOTE_DIR:-/opt/mao-data/uploads/eterm}"
 ZIP=eterm-mac.zip
 APPCAST=eterm-mac.xml
-BASE_URL=https://eterm.etarch.cn/updates
+# 更新元数据基址：appcast 下载前缀与客户端 --dart-define 同源，必须显式提供
+BASE_URL="${ETERM_UPDATE_BASE_URL:-}"
 SPARKLE_BIN=macos/Pods/Sparkle/bin
 # EdDSA 私钥走文件不落钥匙串（§9.3，AGENTS.md 钥匙串教训同源）；ETERM_SPARKLE_PRIVATE_KEY 可覆盖
-SPARKLE_KEY="${ETERM_SPARKLE_PRIVATE_KEY:-$HOME/Downloads/eterm-sparkle-ed25519}"
+SPARKLE_KEY="${ETERM_SPARKLE_PRIVATE_KEY:-$HOME/.ssh/eterm-sparkle-ed25519}"
+
+# Info.plist 注入/恢复：构建期把真实 feed 地址写进 Info.plist，退出时恢复占位符，
+# 保证仓库内永远只有占位符域名（发布失败/中断也不留残渍）
+PLIST_BACKUP=""
+restore_plist() {
+  if [[ -n "$PLIST_BACKUP" && -f "$PLIST_BACKUP" ]]; then
+    cp "$PLIST_BACKUP" macos/Runner/Info.plist
+    rm -f "$PLIST_BACKUP"
+    PLIST_BACKUP=""
+  fi
+}
+trap restore_plist EXIT
 
 NOTES_ARG=""
 NO_UPLOAD=0
@@ -26,6 +41,12 @@ for arg in "$@"; do
     *) echo "未知参数: $arg"; exit 1 ;;
   esac
 done
+
+if [[ -z "$BASE_URL" ]]; then
+  echo "❌ 必须导出 ETERM_UPDATE_BASE_URL（如 https://hub.example.com/updates）："
+  echo "   appcast 的 --download-url-prefix 与客户端 --dart-define 都取自此值，空值会生成坏 appcast"
+  exit 1
+fi
 
 # 0. 前置校验（§9.1）+ 工具链
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -62,7 +83,12 @@ BUILD=${FULLVER##*+}
 echo "== bump build → $FULLVER =="
 
 # 2. 构建 + zip（ditto 保留资源 fork/xattr，Sparkle 官方口径 §9.2）
-flutter build macos --release
+#    先注入真实 feed 地址（占位符 → ETERM_UPDATE_BASE_URL），trap 负责恢复
+PLIST_BACKUP=$(mktemp)
+cp macos/Runner/Info.plist "$PLIST_BACKUP"
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL ${BASE_URL}/eterm-mac.xml" macos/Runner/Info.plist
+flutter build macos --release --dart-define=ETERM_UPDATE_BASE_URL="$BASE_URL"
+restore_plist
 APP=build/macos/Build/Products/Release/Eterm.app
 if [[ ! -d "$APP" ]]; then
   echo "❌ 构建产物缺失 $APP"
@@ -84,7 +110,7 @@ if [[ ! -f "$SPARKLE_KEY" ]]; then
   exit 1
 fi
 STAGE=$(mktemp -d)
-trap 'rm -rf "$STAGE"' EXIT
+trap 'restore_plist; rm -rf "$STAGE"' EXIT
 cp "build/$ZIP" "$STAGE/$ZIP"
 "$SPARKLE_BIN/generate_appcast" --ed-key-file "$SPARKLE_KEY" \
   --download-url-prefix "$BASE_URL/" "$STAGE"

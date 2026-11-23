@@ -15,7 +15,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../src/rust/api/local.dart' as local;
 
-const _kMetaBase = 'https://eterm.etarch.cn/updates';
+// 更新元数据基址：构建期注入（--dart-define=ETERM_UPDATE_BASE_URL=https://your-hub.example.com/updates）。
+// 仓库内不内置任何默认地址——fork/自建部署必须显式提供，空值 = 关闭应用内更新检查。
+const _kMetaBase = String.fromEnvironment('ETERM_UPDATE_BASE_URL', defaultValue: '');
 const _kLastCheckKey = 'app.update.last_check';
 
 /// 更新元数据（方案 §4.1/§4.3）。必填：version/build/url/sha256；
@@ -161,6 +163,8 @@ class AppUpdate {
   /// [respectThrottle] 启动静默检查传 true（24h 节流，成功后才记时间戳）；手动检查传 false。
   Future<UpdateCheckResult> check({bool respectThrottle = true}) async {
     if (!isSupported) return const UpdateCheckResult(UpdateCheckStatus.upToDate);
+    // 未配置元数据地址（--dart-define 未注入）→ 视为检查失败，静默不影响登录同步
+    if (_kMetaBase.isEmpty) return const UpdateCheckResult(UpdateCheckStatus.failed);
     final now = DateTime.now().millisecondsSinceEpoch;
     if (respectThrottle) {
       final last = int.tryParse(local.kvGet(key: _kLastCheckKey)) ?? 0;

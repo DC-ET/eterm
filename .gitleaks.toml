@@ -1,0 +1,18 @@
+# eterm gitleaks 配置
+#
+# 门禁口径：扫描当前受版本控制文件（CI：gitleaks detect --no-git）。
+# git 历史全量扫描属于「开源前独立检查项」（历史含已轮换的旧测试密码，见提交记录），
+# 本地手动跑：gitleaks detect --log-opts="--all"（或 gitleaks git . ）
+
+title = "eterm gitleaks config"
+
+[extend]
+# 继承官方默认规则集
+useDefault = true
+
+[allowlist]
+description = "已知答案测试（KAT）夹具：seed 派生的测试用 PEM，非真实凭据"
+paths = [
+  '''client/app/rust/src/util/sshkey\.rs$''',
+  '''client/app/test/keychain_test\.dart$''',
+]
