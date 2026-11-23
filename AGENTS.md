@@ -9,6 +9,14 @@
 - `deploy/` — nginx/systemd/备份样例（自建部署参考；生产实例信息不入库，见本地 private-info.md）
 - `docs/` — PRD、技术方案、`eterm-发布流程.md`（改发布相关前必读）
 
+## 多端一致性规范（改客户端代码前必读）
+
+- 客户端是**同一套 Flutter 工程**（macOS + Windows 桌面 + Android + iPhone 四端共享 `client/app/lib` 与 `rust/`）：**用户反馈任何客户端 bug 或新增需求时，默认按全端处理**——先判定受影响的端集合（桌面：标题栏/窗口控制/鼠标交互；手机：`<720` 断点布局、触控、后台挂起；平台能力差异：iOS/Android `file_selector` save 未实现、iOS 锁竖屏、各端 entitlements/Info.plist/AndroidManifest 等），再逐端实现或修复，**禁止只改一个端就收工**。
+- 改动若落在共享 Dart 代码里，天然影响全端：必须 `flutter analyze`（0 error）+ `flutter test` 全绿，并按改动性质补各端构建验证（macOS、Android 本地可跑；Windows 须 Windows 机执行、iOS 走模拟器构建，命令见上）。
+- 平台专属分支代码（`Platform.isX` / `defaultTargetPlatform` / `MediaQuery.width < 720` / 各端配置文件）改动时**逐端核对**，勿因一端验证通过就假定其他端成立。
+- 若经分析某端确实不适用（如 iOS 锁竖屏、某平台 API 未实现），在提交说明或回复里**显式写明「该端不适用 + 原因」**，不留模糊地带。
+- 发布口径同步：功能/修复进入发布时，四端 bump 与发布流程（`docs/eterm-发布流程.md`）保持一致，避免只有单端带着修复。
+
 ## 常用命令
 
 ```bash

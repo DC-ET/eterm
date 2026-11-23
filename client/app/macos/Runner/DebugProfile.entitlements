@@ -2,21 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 与 Release.entitlements 同决策（2026-11-23）：关闭 App Sandbox，
+	     避免调试与发布行为分叉（SFTP 本机工作区授权语义不同会误导排查）。
+	     allow-jit / network.server 为调试期键，非沙盒下被忽略，保留备查。 -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<false/>
 	<key>com.apple.security.cs.allow-jit</key>
-	<true/>
-	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
-	<!-- Sparkle Installer XPC 越沙盒 mach-lookup 例外（方案 §7.3；Xcode 自动替换 bundle id 变量） -->
-	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
-	</array>
 </dict>
 </plist>

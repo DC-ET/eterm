@@ -2,17 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 2026-11-23 决策：关闭 App Sandbox。SFTP 本机工作区需要任意路径读写，
+	     沙盒授权不跨启动持久化（未存 security-scoped bookmark 时每次重启都要重选目录）。
+	     自分发场景（非 App Store）功能优先；Sparkle 的 mach-lookup 例外在非沙盒下
+     自动失效，无需保留；user-selected 授权键一并移除（无意义）。 -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
-	<key>com.apple.security.files.user-selected.read-write</key>
-	<true/>
+	<false/>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- Sparkle Installer XPC 越沙盒 mach-lookup 例外（方案 §7.3；Xcode 自动替换 bundle id 变量） -->
-	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
-	</array>
 </dict>
 </plist>

@@ -85,6 +85,9 @@ class _Side {
   bool rootFixed = false;
   List<_LocalEntry>? lentries;
   int localListSeq = 0;
+  String? localHint; // localPending 时的补充说明（如授权失效需重选）
+  // 当前选中条目名（按目录内唯一命名；换目录/刷新即清空，见各导航函数）
+  String? selected;
 }
 
 class SftpDualPage extends StatefulWidget {
@@ -184,7 +187,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final id = s.sessionId;
     if (id == null) return;
     final seq = ++s.listSeq;
-    setState(() => s.rentries = null);
+    setState(() {
+      s.selected = null; // 换目录/刷新：旧选中项已不在列表里
+      s.rentries = null;
+    });
     try {
       final items = await sftp.sftpList(id: id, path: s.rpath);
       if (!mounted || seq != s.listSeq) return; // 已发起更新的列举
@@ -201,14 +207,20 @@ class _SftpDualPageState extends State<SftpDualPage> {
       s.rpath.endsWith('/') ? '${s.rpath}$name' : '${s.rpath}/$name';
 
   void _enterRemote(_Side s, sftp.SftpEntry e) {
-    setState(() => s.rpath = _joinRemote(s, e.name));
+    setState(() {
+      s.selected = null;
+      s.rpath = _joinRemote(s, e.name);
+    });
     _list(s);
   }
 
   void _upRemote(_Side s) {
     if (s.rpath == '/' || s.rpath.isEmpty) return;
     final idx = s.rpath.lastIndexOf('/');
-    setState(() => s.rpath = idx <= 0 ? '/' : s.rpath.substring(0, idx));
+    setState(() {
+      s.selected = null;
+      s.rpath = idx <= 0 ? '/' : s.rpath.substring(0, idx);
+    });
     _list(s);
   }
 
@@ -247,9 +259,12 @@ class _SftpDualPageState extends State<SftpDualPage> {
     // 桌面：恢复上次选择的目录（评审 P1：此前每次打开都要重选）
     try {
       final saved = local.kvGet(key: 'sftp.localRoot');
-      if (saved.isNotEmpty && Directory(saved).existsSync()) {
+      // 注意：existsSync 会漏放行——沙盒下路径存在 ≠ 可读（授权丢失时 stat 仍成功、
+      // 列举才 EPERM），必须真列举一次探活，失败则回退到选目录（见 _localReadable）
+      if (saved.isNotEmpty && await _localReadable(saved)) {
         if (!mounted) return;
         setState(() {
+          s.localHint = null;
           s.lroot = saved;
           s.lpath = saved;
           s.phase = _SidePhase.localReady;
@@ -257,9 +272,42 @@ class _SftpDualPageState extends State<SftpDualPage> {
         _lsLocal(s);
         return;
       }
+      if (saved.isNotEmpty && !mounted) return;
+      if (saved.isNotEmpty) {
+        // 有旧路径但已不可读：几乎总是沙盒授权未跨启动持久化（未存 security-scoped
+        // bookmark），给用户一句明白话，别让他对着空列表或报错猜
+        setState(() {
+          s.localHint = '上次的目录已失去访问授权（macOS 沙盒授权不随重启保留），请重新选择';
+        });
+      }
     } catch (_) {}
     if (!mounted) return;
     setState(() => s.phase = _SidePhase.localPending);
+  }
+
+  /// 本地目录可读性探活：真列举一次（空目录也返回 true）。
+  /// 沙盒授权失效时 existsSync 为 true 而 list() 抛 PathAccessException，
+  /// 只有实际列举才能区分"路径不在"与"存在但没权限"。
+  Future<bool> _localReadable(String dir) async {
+    try {
+      await Directory(dir).list(followLinks: false).take(1).toList();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 是否沙盒/权限类错误（EPERM/EACCES）。此类失败重选目录即可恢复，
+  /// 与"目录被删/IO 错"区分开：后者保持空列表+提示，前者回退到选目录状态。
+  bool _isPermissionError(Object e) {
+    if (e is PathAccessException) return true;
+    final msg = e.toString();
+    return msg.contains('Operation not permitted') ||
+        msg.contains('Permission denied') ||
+        msg.contains('errno = 1') ||
+        msg.contains('errno = 13') ||
+        msg.contains('errno: 1') ||
+        msg.contains('errno: 13');
   }
 
   Future<void> _pickLocalRoot(_Side s) async {
@@ -270,6 +318,8 @@ class _SftpDualPageState extends State<SftpDualPage> {
         local.kvPut(key: 'sftp.localRoot', value: dir);
       } catch (_) {}
       setState(() {
+        s.localHint = null;
+        s.selected = null;
         s.lroot = dir;
         s.lpath = dir;
         s.lentries = null;
@@ -285,6 +335,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final dir = s.lpath;
     if (dir == null) return;
     final seq = ++s.localListSeq;
+    setState(() {
+      s.selected = null;
+      s.lentries = null;
+    });
     try {
       final out = <_LocalEntry>[];
       await for (final entity in Directory(dir).list(followLinks: false)) {
@@ -306,6 +360,17 @@ class _SftpDualPageState extends State<SftpDualPage> {
       setState(() => s.lentries = out);
     } catch (e) {
       if (!mounted || seq != s.localListSeq) return;
+      if (_isPermissionError(e)) {
+        // 导航进了授权外目录（如 ../ 逃出授权根）：回退到选目录状态，
+        // 引导用户重新授权，而不是留一个空列表让人以为目录是空的
+        setState(() {
+          s.phase = _SidePhase.localPending;
+          s.localHint = '无法访问该目录（权限不足），请重新选择';
+        });
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('目录需要重新授权')));
+        return;
+      }
       setState(() => s.lentries = []);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('读取本地目录失败: $e')));
@@ -318,10 +383,18 @@ class _SftpDualPageState extends State<SftpDualPage> {
     return dir.endsWith('/') ? '$dir$name' : '$dir/$name';
   }
 
+  /// basename：'/' 与 '' 都归到 '/'（根目录面包屑首段用）。
+  String _baseName(String path) {
+    if (path.isEmpty || path == '/') return '/';
+    final i = path.lastIndexOf('/');
+    return i < 0 ? path : path.substring(i + 1);
+  }
+
   void _enterLocal(_Side s, _LocalEntry e) {
     final p = _joinLocal(s, e.name);
     if (p == null) return;
     setState(() {
+      s.selected = null;
       s.lpath = p;
       s.lentries = null;
     });
@@ -337,10 +410,64 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final parent = idx <= 0 ? '/' : dir.substring(0, idx);
     if (parent == dir) return;
     setState(() {
+      s.selected = null;
       s.lpath = parent;
       s.lentries = null;
     });
     _lsLocal(s);
+  }
+
+  /// 面包屑跳转：远端到任意层级（含根）。
+  void _jumpRemote(_Side s, String path) {
+    final target = path.isEmpty ? '/' : path;
+    if (target == s.rpath) return;
+    setState(() {
+      s.selected = null;
+      s.rpath = target;
+    });
+    _list(s);
+  }
+
+  /// 面包屑跳转：本机侧钳制在浏览根（授权根）内——逃出去也读不了。
+  void _jumpLocal(_Side s, String path) {
+    final root = s.lroot;
+    if (root == null) return;
+    var target = path;
+    if (target != root && !target.startsWith('$root/')) target = root;
+    if (target == s.lpath) return;
+    setState(() {
+      s.selected = null;
+      s.lpath = target;
+      s.lentries = null;
+    });
+    _lsLocal(s);
+  }
+
+  /// 远端面包屑分段：['/', 'opt', 'mao-data', ...]；根目录只一段。
+  List<String> _remoteCrumbs(_Side s) {
+    final p = s.rpath.isEmpty ? '/' : s.rpath;
+    if (p == '/') return const ['/'];
+    return ['/', ...p.split('/').where((e) => e.isNotEmpty)];
+  }
+
+  /// 本机面包屑分段：首段为浏览根（授权根）的 basename，其余为根下的相对层级；
+  /// 根之上的路径不可达（沙盒/Android 工作区都不允许），干脆不展示。
+  List<String> _localCrumbs(_Side s) {
+    final root = s.lroot;
+    if (root == null) return const [];
+    final path = s.lpath ?? root;
+    if (path == root) return [_baseName(root)];
+    final rel = path.startsWith('$root/') ? path.substring(root.length + 1) : '';
+    return [_baseName(root), ...rel.split('/').where((e) => e.isNotEmpty)];
+  }
+
+  /// 由面包屑下标还原完整路径（两端同构：0 = 根/浏览根）。
+  String _crumbPath(_Side s, List<String> crumbs, int i) {
+    if (s.isLocal) {
+      final root = s.lroot ?? '';
+      return i <= 0 ? root : '$root/${crumbs.sublist(1, i + 1).join('/')}';
+    }
+    return i <= 0 ? '/' : '/${crumbs.sublist(1, i + 1).join('/')}';
   }
 
   Set<String> _localNames(_Side s) =>
@@ -1145,12 +1272,14 @@ class _SftpDualPageState extends State<SftpDualPage> {
     }
     if (s.isLocal && s.phase == _SidePhase.localPending) {
       // 桌面：等待选择目录（Android 由 _initLocal 直接就绪）
+      final hint = s.localHint;
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '选择一个本机目录开始浏览',
+              hint ?? '选择一个本机目录开始浏览',
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Et.textSecondary),
             ),
             const SizedBox(height: 10),
@@ -1182,6 +1311,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   Widget _panelHeader(_Side s) {
     final picked = !s.isLocal || s.lpath != null;
+    final crumbs = s.isLocal ? _localCrumbs(s) : _remoteCrumbs(s);
     final path = s.isLocal ? (picked ? s.lpath! : '未选择目录') : s.rpath;
     return Container(
       color: Et.card,
@@ -1204,16 +1334,28 @@ class _SftpDualPageState extends State<SftpDualPage> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontFamily: 'Menlo',
-                color: Et.textSecondary,
-              ),
-            ),
+            child: crumbs.isEmpty
+                ? Text(
+                    path,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontFamily: 'Menlo',
+                      color: Et.textSecondary,
+                    ),
+                  )
+                : _Crumbs(
+                    crumbs: crumbs,
+                    onJump: (i) {
+                      final p = _crumbPath(s, crumbs, i);
+                      if (s.isLocal) {
+                        _jumpLocal(s, p);
+                      } else {
+                        _jumpRemote(s, p);
+                      }
+                    },
+                  ),
           ),
           if (s.isLocal && !s.rootFixed)
             IconButton(
@@ -1315,6 +1457,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
               _fmtTime(e.mtime),
             ].join(' · '),
             onOpen: e.isDir ? () => _enterRemote(s, e) : null,
+            selected: s.selected == e.name,
+            onSelect: () => setState(
+              () => s.selected = s.selected == e.name ? null : e.name,
+            ),
             actions: [
               if (canTransfer)
                 _RowAction(
@@ -1440,6 +1586,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
               _fmtTime(e.mtime),
             ].join(' · '),
             onOpen: e.isDir ? () => _enterLocal(s, e) : null,
+            selected: s.selected == e.name,
+            onSelect: () => setState(
+              () => s.selected = s.selected == e.name ? null : e.name,
+            ),
             actions: [
               if (!e.isDir && canUpload)
                 _RowAction(
@@ -1605,6 +1755,8 @@ class _FileRow extends StatelessWidget {
     required this.isDir,
     required this.meta,
     required this.onOpen,
+    required this.onSelect,
+    this.selected = false,
     required this.actions,
   });
 
@@ -1612,12 +1764,16 @@ class _FileRow extends StatelessWidget {
   final bool isDir;
   final String meta;
   final VoidCallback? onOpen;
+  final VoidCallback onSelect;
+  final bool selected;
   final List<_RowAction> actions;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
+    final row = ListTile(
       dense: true,
+      selected: selected,
+      selectedTileColor: Et.accent.withValues(alpha: 0.16),
       leading: Icon(
         isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined,
         size: 22,
@@ -1630,7 +1786,7 @@ class _FileRow extends StatelessWidget {
         style: TextStyle(
           fontFamily: 'Menlo',
           fontSize: 13.5,
-          fontWeight: isDir ? FontWeight.w600 : FontWeight.w400,
+          fontWeight: isDir || selected ? FontWeight.w600 : FontWeight.w400,
           color: Et.textPrimary,
         ),
       ),
@@ -1674,7 +1830,64 @@ class _FileRow extends StatelessWidget {
             ),
         ],
       ),
-      onTap: onOpen,
+      // 单击=选中（给视觉反馈与后续操作对象）；双击=打开/进入（Finder 习惯）
+      onTap: onSelect,
+    );
+    if (onOpen == null) return row;
+    return GestureDetector(onDoubleTap: onOpen, child: row);
+  }
+}
+
+/// 路径面包屑：单击任一段跳转到该目录（本机侧钳制在授权根内）。
+/// 段多时横向滚动，最后一段高亮表示当前位置。
+class _Crumbs extends StatelessWidget {
+  const _Crumbs({required this.crumbs, required this.onJump});
+
+  final List<String> crumbs;
+  final void Function(int index) onJump;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < crumbs.length; i++) ...[
+            if (i > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1),
+                child: Text(
+                  '›',
+                  style: TextStyle(
+                    fontFamily: 'Menlo',
+                    fontSize: 11.5,
+                    color: Et.textSecondary,
+                  ),
+                ),
+              ),
+            InkWell(
+              onTap: () => onJump(i),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+                child: Text(
+                  crumbs[i],
+                  style: TextStyle(
+                    fontFamily: 'Menlo',
+                    fontSize: 11.5,
+                    color: i == crumbs.length - 1
+                        ? Et.textPrimary
+                        : Et.textSecondary,
+                    fontWeight: i == crumbs.length - 1
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
