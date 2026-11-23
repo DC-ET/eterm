@@ -1,5 +1,6 @@
 // SFTP 双侧文件管理页 v2（任务清单 #6/#7/#8/#9）：
 // - 两侧各自为「远端会话」或「本机工作区」，任选两台服务器互传，不再限制一边是本地
+// - 桌面双栏：按住文件拖到对侧面板，松手传到对侧当前目录（与 ⋮ 菜单同一条 _transfer）
 // - 远端目录 → 本地：exec tar -czf - 打包压缩流式下载（<名>.tar.gz）
 // - 远端目录 → 远端：递归逐文件复制（目标同大小跳过，重试可续）
 // - 远端文件 → 远端：分块经客户端内存直传（B 侧 .eterm-part 暂存 + 改名）
@@ -17,6 +18,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/app_state.dart';
+import 'sftp_drag.dart';
 import 'sftp_edit_page.dart';
 import 'theme.dart';
 import 'ui_utils.dart';
@@ -86,11 +88,7 @@ class _Side {
 }
 
 class SftpDualPage extends StatefulWidget {
-  const SftpDualPage({
-    super.key,
-    required this.left,
-    required this.right,
-  });
+  const SftpDualPage({super.key, required this.left, required this.right});
 
   final SftpSideSpec left;
   final SftpSideSpec right;
@@ -225,7 +223,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
         // 「文件」App 与 Finder 可见）——两端同构落盘（方案 §4.4 / D6）
         final base = Platform.isAndroid
             ? (await getExternalStorageDirectory())?.path ??
-                (await getApplicationDocumentsDirectory()).path
+                  (await getApplicationDocumentsDirectory()).path
             : (await getApplicationDocumentsDirectory()).path;
         final ws = Directory('$base/sftp-local');
         await ws.create(recursive: true);
@@ -291,12 +289,14 @@ class _SftpDualPageState extends State<SftpDualPage> {
       final out = <_LocalEntry>[];
       await for (final entity in Directory(dir).list(followLinks: false)) {
         final st = await entity.stat();
-        out.add(_LocalEntry(
-          name: entity.path.split('/').last,
-          isDir: st.type == FileSystemEntityType.directory,
-          size: st.size,
-          mtime: st.modified.millisecondsSinceEpoch ~/ 1000,
-        ));
+        out.add(
+          _LocalEntry(
+            name: entity.path.split('/').last,
+            isDir: st.type == FileSystemEntityType.directory,
+            size: st.size,
+            mtime: st.modified.millisecondsSinceEpoch ~/ 1000,
+          ),
+        );
       }
       out.sort((a, b) {
         if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
@@ -350,11 +350,75 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   _Side _otherOf(_Side s) => identical(s, _l) ? _r : _l;
 
+  int _indexOf(_Side s) => identical(s, _l) ? 0 : 1;
+
+  /// 文件行可拖时包一层识别器。不可拖（手机单栏、对侧还不能收、本机目录）原样返回。
+  Widget _maybeDrag({
+    required bool enabled,
+    required _Side src,
+    required String name,
+    required bool isDir,
+    sftp.SftpEntry? remote,
+    _LocalEntry? local,
+    required Widget Function() buildRow,
+  }) {
+    final row = buildRow();
+    if (!enabled) return row;
+    return MouseRegion(
+      cursor: SystemMouseCursors.grab,
+      child: SftpPanelDraggable<_SftpDrag>(
+        data: _SftpDrag(
+          sideIndex: _indexOf(src),
+          name: name,
+          isDir: isDir,
+          remote: remote,
+          local: local,
+        ),
+        feedback: _DragChip(name: name, isDir: isDir),
+        childWhenDragging: Opacity(opacity: 0.38, child: buildRow()),
+        child: row,
+      ),
+    );
+  }
+
+  /// 整侧都是落点：松手传到该侧当前目录，不看落在哪一行上。
+  Widget _dropPanel(_Side s, {required Widget child}) {
+    final index = _indexOf(s);
+    return DragTarget<_SftpDrag>(
+      onWillAcceptWithDetails: (d) => d.data.sideIndex != index,
+      onAcceptWithDetails: (d) {
+        unawaited(
+          _transfer(
+            _sides[d.data.sideIndex],
+            re: d.data.remote,
+            le: d.data.local,
+          ),
+        );
+      },
+      builder: (context, candidate, _) {
+        final hot = candidate.isNotEmpty;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            child,
+            if (hot)
+              const Positioned.fill(
+                child: IgnorePointer(child: _DropHighlight()),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   /// 从 src 侧把条目传到对侧。按两侧类型分派：
   ///   文件：本地→远端 upload；远端→本地 download；远端→远端 copy
   ///   目录：远端→本地 tarDownload（<名>.tar.gz）；远端→远端 copyDir 递归复制
-  Future<void> _transfer(_Side src,
-      {sftp.SftpEntry? re, _LocalEntry? le}) async {
+  Future<void> _transfer(
+    _Side src, {
+    sftp.SftpEntry? re,
+    _LocalEntry? le,
+  }) async {
     final dst = _otherOf(src);
     final name = re?.name ?? le!.name;
     final isDir = re?.isDir ?? le!.isDir;
@@ -405,7 +469,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
         if (act == null || act == ConflictAction.skip) return;
         if (act == ConflictAction.rename) {
           pathTo = _joinLocal(
-              dst, nextAvailableName(_localNames(dst), localName))!;
+            dst,
+            nextAvailableName(_localNames(dst), localName),
+          )!;
         }
       }
     } else {
@@ -426,8 +492,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
           final act = await _conflictDialog(name);
           if (act == null || act == ConflictAction.skip) return;
           if (act == ConflictAction.rename) {
-            pathTo =
-                _joinRemote(dst, nextAvailableName(_remoteNames(dst), name));
+            pathTo = _joinRemote(
+              dst,
+              nextAvailableName(_remoteNames(dst), name),
+            );
           }
         }
       }
@@ -444,8 +512,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
       kind = isDir ? SftpJobKind.copyDir : SftpJobKind.copy;
       sessionTo = dst.sessionId;
     }
-    final displayName =
-        (!src.isLocal && isDir && dst.isLocal) ? '$name.tar.gz' : name;
+    final displayName = (!src.isLocal && isDir && dst.isLocal)
+        ? '$name.tar.gz'
+        : name;
 
     final job = _queue.enqueue(
       kind: kind,
@@ -464,18 +533,18 @@ class _SftpDualPageState extends State<SftpDualPage> {
   }
 
   SftpRemoteSpec _specOf(_Side s) => SftpRemoteSpec(
-        host: s.spec.host!.hostname,
-        port: s.spec.host!.port,
-        user: s.spec.host!.username,
-        authKind: s.spec.authKind!,
-        secret: s.spec.secret!,
-      );
+    host: s.spec.host!.hostname,
+    port: s.spec.host!.port,
+    user: s.spec.host!.username,
+    authKind: s.spec.authKind!,
+    secret: s.spec.secret!,
+  );
 
   /// 任务清单 #9：入队时登记「完成后刷新目标侧列表」。
   /// 目标侧：upload/copy/copyDir = 远端目标侧；download/tarDownload = 本机目标侧。
   void _registerAutoRefresh(SftpTransferJob job, _Side dst) {
     final path = job.targetPath;
-    final idx = identical(dst, _l) ? 0 : 1;
+    final idx = _indexOf(dst);
     final dir = dst.isLocal ? _localParentOf(path) : _remoteParentOf(path);
     _autoRefresh[job] = (idx, dir);
   }
@@ -530,19 +599,20 @@ class _SftpDualPageState extends State<SftpDualPage> {
       _err('文件超过 2MB，暂不支持编辑');
       return;
     }
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SftpEditPage(
-        hostLabel: s.spec.host!.label,
-        sessionId: id,
-        remotePath: _joinRemote(s, e.name),
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SftpEditPage(
+          hostLabel: s.spec.host!.label,
+          sessionId: id,
+          remotePath: _joinRemote(s, e.name),
+        ),
       ),
-    ));
+    );
     if (mounted) _list(s);
   }
 
   Future<void> _mkdir(_Side s) async {
-    final name =
-        await _promptText(s.isLocal ? '新建文件夹（本机）' : '新建文件夹', '文件夹名称');
+    final name = await _promptText(s.isLocal ? '新建文件夹（本机）' : '新建文件夹', '文件夹名称');
     if (name == null || name.isEmpty) return;
     if (_busy) return;
     setState(() => _busy = true);
@@ -580,9 +650,10 @@ class _SftpDualPageState extends State<SftpDualPage> {
         await _lsLocal(s);
       } else {
         await sftp.sftpRename(
-            id: s.sessionId!,
-            from: _joinRemote(s, name),
-            to: _joinRemote(s, newName));
+          id: s.sessionId!,
+          from: _joinRemote(s, name),
+          to: _joinRemote(s, newName),
+        );
         await _list(s);
       }
     } catch (e) {
@@ -631,29 +702,41 @@ class _SftpDualPageState extends State<SftpDualPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('「$name」已存在',
-            style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Et.textPrimary)),
-        content: Text('目标侧已有同名条目，如何处理？',
-            style: TextStyle(
-                fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
+        title: Text(
+          '「$name」已存在',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Et.textPrimary,
+          ),
+        ),
+        content: Text(
+          '目标侧已有同名条目，如何处理？',
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.5,
+            color: Et.textSecondary,
+          ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, ConflictAction.skip),
-              child: Text('跳过', style: TextStyle(color: Et.textSecondary))),
+            onPressed: () => Navigator.pop(ctx, ConflictAction.skip),
+            child: Text('跳过', style: TextStyle(color: Et.textSecondary)),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, ConflictAction.rename),
-              child:
-                  Text('自动改名', style: TextStyle(color: Et.textPrimary))),
+            onPressed: () => Navigator.pop(ctx, ConflictAction.rename),
+            child: Text('自动改名', style: TextStyle(color: Et.textPrimary)),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, ConflictAction.overwrite),
-              style: FilledButton.styleFrom(
-                  backgroundColor: Et.danger,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(9))),
-              child: const Text('覆盖')),
+            onPressed: () => Navigator.pop(ctx, ConflictAction.overwrite),
+            style: FilledButton.styleFrom(
+              backgroundColor: Et.danger,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            child: const Text('覆盖'),
+          ),
         ],
       ),
     );
@@ -665,65 +748,86 @@ class _SftpDualPageState extends State<SftpDualPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('目录「$name」已存在',
-            style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Et.textPrimary)),
-        content: Text('将合并复制：已存在且同大小的文件跳过，其余覆盖。',
-            style: TextStyle(
-                fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
+        title: Text(
+          '目录「$name」已存在',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Et.textPrimary,
+          ),
+        ),
+        content: Text(
+          '将合并复制：已存在且同大小的文件跳过，其余覆盖。',
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.5,
+            color: Et.textSecondary,
+          ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text('取消', style: TextStyle(color: Et.textSecondary))),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary)),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(
-                  backgroundColor: Et.primaryBtn,
-                  foregroundColor: Et.primaryBtnText,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(9))),
-              child: const Text('合并复制')),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Et.primaryBtn,
+              foregroundColor: Et.primaryBtnText,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            child: const Text('合并复制'),
+          ),
         ],
       ),
     );
   }
 
-  Future<bool?> _confirmDelete(String name, bool isDir,
-      {required bool remote}) {
+  Future<bool?> _confirmDelete(
+    String name,
+    bool isDir, {
+    required bool remote,
+  }) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('删除',
-            style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Et.textPrimary)),
+        title: Text(
+          '删除',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Et.textPrimary,
+          ),
+        ),
         content: Text(
-            remote
-                ? (isDir
-                    ? '删除远端空目录「$name」？（目录须为空）'
-                    : '删除远端文件「$name」？不可恢复。')
-                : (isDir
-                    ? '删除本机空目录「$name」？（目录须为空）'
-                    : '删除本机文件「$name」？不可恢复。'),
-            style: TextStyle(
-                fontSize: 13.5, height: 1.5, color: Et.textSecondary)),
+          remote
+              ? (isDir ? '删除远端空目录「$name」？（目录须为空）' : '删除远端文件「$name」？不可恢复。')
+              : (isDir ? '删除本机空目录「$name」？（目录须为空）' : '删除本机文件「$name」？不可恢复。'),
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.5,
+            color: Et.textSecondary,
+          ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child:
-                  Text('取消', style: TextStyle(color: Et.textSecondary))),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary)),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(
-                  backgroundColor: Et.danger,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(9))),
-              child: const Text('删除')),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Et.danger,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
@@ -735,19 +839,21 @@ class _SftpDualPageState extends State<SftpDualPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  Future<String?> _promptText(String title, String label,
-      {String? initial}) {
+  Future<String?> _promptText(String title, String label, {String? initial}) {
     final ctrl = TextEditingController(text: initial ?? '');
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(title,
-            style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Et.textPrimary)),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Et.textPrimary,
+          ),
+        ),
         content: TextField(
           controller: ctrl,
           autofocus: true,
@@ -755,17 +861,20 @@ class _SftpDualPageState extends State<SftpDualPage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child:
-                  Text('取消', style: TextStyle(color: Et.textSecondary))),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary)),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              style: FilledButton.styleFrom(
-                  backgroundColor: Et.primaryBtn,
-                  foregroundColor: Et.primaryBtnText,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(9))),
-              child: const Text('确定')),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            style: FilledButton.styleFrom(
+              backgroundColor: Et.primaryBtn,
+              foregroundColor: Et.primaryBtnText,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            child: const Text('确定'),
+          ),
         ],
       ),
     );
@@ -776,7 +885,8 @@ class _SftpDualPageState extends State<SftpDualPage> {
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (_) => ListenableBuilder(
         listenable: _queue,
         builder: (context, _) => SafeArea(
@@ -786,22 +896,28 @@ class _SftpDualPageState extends State<SftpDualPage> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
-                  child: Row(children: [
-                    Text('传输队列',
+                  child: Row(
+                    children: [
+                      Text(
+                        '传输队列',
                         style: TextStyle(
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w700,
-                            color: Et.textPrimary)),
-                    const SizedBox(width: 8),
-                    Text('${_queue.activeCount} 个进行中',
-                        style: TextStyle(
-                            fontSize: 12, color: Et.textSecondary)),
-                    const Spacer(),
-                    TextButton(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w700,
+                          color: Et.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_queue.activeCount} 个进行中',
+                        style: TextStyle(fontSize: 12, color: Et.textSecondary),
+                      ),
+                      const Spacer(),
+                      TextButton(
                         onPressed: _queue.clearFinished,
-                        child:
-                            Text('清已完成', style: TextStyle(fontSize: 13))),
-                  ]),
+                        child: Text('清已完成', style: TextStyle(fontSize: 13)),
+                      ),
+                    ],
+                  ),
                 ),
                 Divider(height: 1, color: Et.cardBorder),
                 Expanded(child: _queueList()),
@@ -816,8 +932,11 @@ class _SftpDualPageState extends State<SftpDualPage> {
   Widget _queueList() {
     if (_queue.jobs.isEmpty) {
       return Center(
-          child: Text('暂无传输任务',
-              style: TextStyle(fontSize: 13, color: Et.textSecondary)));
+        child: Text(
+          '暂无传输任务',
+          style: TextStyle(fontSize: 13, color: Et.textSecondary),
+        ),
+      );
     }
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -860,20 +979,27 @@ class _SftpDualPageState extends State<SftpDualPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 16.5, fontWeight: FontWeight.w600)),
-            Text(compact
-                ? _sideSubtitle(_activeSide == 0 ? _l : _r)
-                // Menlo 无 ⇄ 字形会回退成 #（复审可选项 3），分隔符用 ·；
-                // 方向语义由上方标题的 ⇄ 承载
-                : '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'Menlo',
-                    color: Et.textSecondary)),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 16.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              compact
+                  ? _sideSubtitle(_activeSide == 0 ? _l : _r)
+                  // Menlo 无 ⇄ 字形会回退成 #（复审可选项 3），分隔符用 ·；
+                  // 方向语义由上方标题的 ⇄ 承载
+                  : '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'Menlo',
+                color: Et.textSecondary,
+              ),
+            ),
           ],
         ),
         actions: [
@@ -920,42 +1046,58 @@ class _SftpDualPageState extends State<SftpDualPage> {
         ),
       ),
       body: compact
-          ? Column(children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
-                child: SegmentedButton<int>(
-                  segments: [
-                    ButtonSegment(
+          ? Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+                  child: SegmentedButton<int>(
+                    segments: [
+                      ButtonSegment(
                         value: 0,
                         icon: Icon(
-                            _l.isLocal
-                                ? Icons.phone_android
-                                : Icons.dns_outlined,
-                            size: 17),
-                        label: Text(_l.label)),
-                    ButtonSegment(
+                          _l.isLocal ? Icons.phone_android : Icons.dns_outlined,
+                          size: 17,
+                        ),
+                        label: Text(_l.label),
+                      ),
+                      ButtonSegment(
                         value: 1,
                         icon: Icon(
-                            _r.isLocal
-                                ? Icons.phone_android
-                                : Icons.dns_outlined,
-                            size: 17),
-                        label: Text(_r.label)),
-                  ],
-                  selected: {_activeSide},
-                  onSelectionChanged: (s) =>
-                      setState(() => _activeSide = s.first),
+                          _r.isLocal ? Icons.phone_android : Icons.dns_outlined,
+                          size: 17,
+                        ),
+                        label: Text(_r.label),
+                      ),
+                    ],
+                    selected: {_activeSide},
+                    onSelectionChanged: (s) =>
+                        setState(() => _activeSide = s.first),
+                  ),
                 ),
-              ),
-              Expanded(child: _sideBody(_activeSide == 0 ? _l : _r)),
-            ])
+                Expanded(
+                  child: _sideBody(
+                    _activeSide == 0 ? _l : _r,
+                    dragEnabled: false,
+                  ),
+                ),
+              ],
+            )
           : Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: _sideBody(_l)),
-                VerticalDivider(
-                    width: 1, thickness: 1, color: Et.cardBorder),
-                Expanded(child: _sideBody(_r)),
+                Expanded(
+                  child: _dropPanel(
+                    _l,
+                    child: _sideBody(_l, dragEnabled: true),
+                  ),
+                ),
+                VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
+                Expanded(
+                  child: _dropPanel(
+                    _r,
+                    child: _sideBody(_r, dragEnabled: true),
+                  ),
+                ),
               ],
             ),
     );
@@ -965,7 +1107,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
       ? (s.lpath ?? '本机未选择目录')
       : '${s.spec.host!.username}@${s.spec.host!.hostname}:${s.rpath}';
 
-  Widget _sideBody(_Side s) {
+  Widget _sideBody(_Side s, {required bool dragEnabled}) {
     if (!s.isLocal && s.phase == _SidePhase.connecting) {
       return _note('连接 ${s.label} 中…', spinner: true);
     }
@@ -975,9 +1117,11 @@ class _SftpDualPageState extends State<SftpDualPage> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(s.reason ?? '连接失败',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+            child: Text(
+              s.reason ?? '连接失败',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Et.textSecondary),
+            ),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -985,8 +1129,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
             icon: const Icon(Icons.refresh, size: 18),
             label: const Text('重试'),
             style: FilledButton.styleFrom(
-                backgroundColor: Et.primaryBtn,
-                foregroundColor: Et.primaryBtnText),
+              backgroundColor: Et.primaryBtn,
+              foregroundColor: Et.primaryBtnText,
+            ),
           ),
         ],
       );
@@ -997,26 +1142,35 @@ class _SftpDualPageState extends State<SftpDualPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('选择一个本机目录开始浏览',
-                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+            Text(
+              '选择一个本机目录开始浏览',
+              style: TextStyle(fontSize: 13, color: Et.textSecondary),
+            ),
             const SizedBox(height: 10),
             FilledButton.icon(
               onPressed: () => _pickLocalRoot(s),
               icon: const Icon(Icons.folder_open, size: 18),
               label: const Text('选择目录'),
               style: FilledButton.styleFrom(
-                  backgroundColor: Et.primaryBtn,
-                  foregroundColor: Et.primaryBtnText),
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Et.primaryBtnText,
+              ),
             ),
           ],
         ),
       );
     }
-    return Column(children: [
-      _panelHeader(s),
-      Divider(height: 1, color: Et.cardBorder),
-      Expanded(child: s.isLocal ? _localList(s) : _remoteList(s)),
-    ]);
+    return Column(
+      children: [
+        _panelHeader(s),
+        Divider(height: 1, color: Et.cardBorder),
+        Expanded(
+          child: s.isLocal
+              ? _localList(s, dragEnabled: dragEnabled)
+              : _remoteList(s, dragEnabled: dragEnabled),
+        ),
+      ],
+    );
   }
 
   Widget _panelHeader(_Side s) {
@@ -1025,55 +1179,66 @@ class _SftpDualPageState extends State<SftpDualPage> {
     return Container(
       color: Et.card,
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-      child: Row(children: [
-        Icon(
-          s.isLocal ? Icons.phone_android : Icons.dns,
-          size: 15,
-          color: Et.textSecondary,
-        ),
-        const SizedBox(width: 6),
-        Text(s.label,
+      child: Row(
+        children: [
+          Icon(
+            s.isLocal ? Icons.phone_android : Icons.dns,
+            size: 15,
+            color: Et.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            s.label,
             style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: Et.textPrimary)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(path,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Et.textPrimary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              path,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 11.5,
-                  fontFamily: 'Menlo',
-                  color: Et.textSecondary)),
-        ),
-        if (s.isLocal && !s.rootFixed)
-          IconButton(
-            onPressed: () => _pickLocalRoot(s),
-            tooltip: '选择本机目录',
-            icon:
-                Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
+                fontSize: 11.5,
+                fontFamily: 'Menlo',
+                color: Et.textSecondary,
+              ),
+            ),
           ),
-        IconButton(
-          onPressed: () => s.isLocal ? _lsLocal(s) : _list(s),
-          tooltip: '刷新',
-          icon: Icon(Icons.refresh, size: 19, color: Et.textSecondary),
-        ),
-        IconButton(
-          onPressed: _busy ? null : () => _mkdir(s),
-          tooltip: s.isLocal ? '新建文件夹（本机）' : '新建文件夹（远端）',
-          icon: Icon(Icons.create_new_folder_outlined,
-              size: 19, color: Et.textSecondary),
-        ),
-      ]),
+          if (s.isLocal && !s.rootFixed)
+            IconButton(
+              onPressed: () => _pickLocalRoot(s),
+              tooltip: '选择本机目录',
+              icon: Icon(Icons.folder_open, size: 19, color: Et.textSecondary),
+            ),
+          IconButton(
+            onPressed: () => s.isLocal ? _lsLocal(s) : _list(s),
+            tooltip: '刷新',
+            icon: Icon(Icons.refresh, size: 19, color: Et.textSecondary),
+          ),
+          IconButton(
+            onPressed: _busy ? null : () => _mkdir(s),
+            tooltip: s.isLocal ? '新建文件夹（本机）' : '新建文件夹（远端）',
+            icon: Icon(
+              Icons.create_new_folder_outlined,
+              size: 19,
+              color: Et.textSecondary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _remoteList(_Side s) {
+  Widget _remoteList(_Side s, {required bool dragEnabled}) {
     final entries = s.rentries;
     if (entries == null) return _note('读取目录中…', spinner: true);
     // 与本地列表同规则排序：目录在前，名称不区分大小写（评审 P2）
-    final sorted = [...entries]..sort((a, b) {
+    final sorted = [...entries]
+      ..sort((a, b) {
         if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
@@ -1085,10 +1250,15 @@ class _SftpDualPageState extends State<SftpDualPage> {
               children: [
                 ListTile(
                   dense: true,
-                  leading: Icon(Icons.arrow_upward,
-                      size: 20, color: Et.textSecondary),
-                  title: const Text('..',
-                      style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+                  leading: Icon(
+                    Icons.arrow_upward,
+                    size: 20,
+                    color: Et.textSecondary,
+                  ),
+                  title: const Text(
+                    '..',
+                    style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5),
+                  ),
                   onTap: () => _upRemote(s),
                 ),
                 Padding(
@@ -1106,78 +1276,93 @@ class _SftpDualPageState extends State<SftpDualPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading:
-                Icon(Icons.arrow_upward, size: 20, color: Et.textSecondary),
-            title: const Text('..',
-                style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+            leading: Icon(
+              Icons.arrow_upward,
+              size: 20,
+              color: Et.textSecondary,
+            ),
+            title: const Text(
+              '..',
+              style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5),
+            ),
             onTap: () => _upRemote(s),
           );
         }
         final e = sorted[i - (canUp ? 1 : 0)];
         final other = _otherOf(s);
-        final canTransfer = other.isLocal ||
+        final canTransfer =
+            other.isLocal ||
             (other.sessionId != null && other.sessionId != s.sessionId);
         final otherLabel = other.isLocal ? '本机' : other.label;
-        return _FileRow(
+        return _maybeDrag(
+          enabled: dragEnabled && canTransfer,
+          src: s,
           name: e.name,
           isDir: e.isDir,
-          meta: [
-            if (!e.isDir) _fmtSize(e.size.toInt()),
-            _fmtTime(e.mtime),
-          ].join(' · '),
-          onOpen: e.isDir ? () => _enterRemote(s, e) : null,
-          actions: [
-            if (canTransfer)
+          remote: e,
+          buildRow: () => _FileRow(
+            name: e.name,
+            isDir: e.isDir,
+            meta: [
+              if (!e.isDir) _fmtSize(e.size.toInt()),
+              _fmtTime(e.mtime),
+            ].join(' · '),
+            onOpen: e.isDir ? () => _enterRemote(s, e) : null,
+            actions: [
+              if (canTransfer)
+                _RowAction(
+                  label: e.isDir
+                      ? (other.isLocal
+                            ? '打包下载到本机（.tar.gz）'
+                            : '复制到 $otherLabel（递归）')
+                      : (other.isLocal ? '下载到本机' : '直传到 $otherLabel'),
+                  icon: e.isDir ? Icons.folder_zip_outlined : Icons.swap_horiz,
+                  onTap: () => _transfer(s, re: e),
+                ),
+              if (!e.isDir)
+                _RowAction(
+                  label: '编辑',
+                  icon: Icons.edit_outlined,
+                  onTap: () => _editRemote(s, e),
+                ),
               _RowAction(
-                label: e.isDir
-                    ? (other.isLocal
-                        ? '打包下载到本机（.tar.gz）'
-                        : '复制到 $otherLabel（递归）')
-                    : (other.isLocal ? '下载到本机' : '直传到 $otherLabel'),
-                icon:
-                    e.isDir ? Icons.folder_zip_outlined : Icons.swap_horiz,
-                onTap: () => _transfer(s, re: e),
+                label: '重命名',
+                icon: Icons.drive_file_rename_outline,
+                onTap: () => _rename(s, re: e),
               ),
-            if (!e.isDir)
               _RowAction(
-                label: '编辑',
-                icon: Icons.edit_outlined,
-                onTap: () => _editRemote(s, e),
+                label: '删除',
+                icon: Icons.delete_outline,
+                destructive: true,
+                onTap: () => _delete(s, re: e),
               ),
-            _RowAction(
-              label: '重命名',
-              icon: Icons.drive_file_rename_outline,
-              onTap: () => _rename(s, re: e),
-            ),
-            _RowAction(
-              label: '删除',
-              icon: Icons.delete_outline,
-              destructive: true,
-              onTap: () => _delete(s, re: e),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _localList(_Side s) {
+  Widget _localList(_Side s, {required bool dragEnabled}) {
     final entries = s.lentries;
     if (s.lpath == null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('先选择一个本机目录',
-                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+            Text(
+              '先选择一个本机目录',
+              style: TextStyle(fontSize: 13, color: Et.textSecondary),
+            ),
             const SizedBox(height: 10),
             FilledButton.icon(
               onPressed: () => _pickLocalRoot(s),
               icon: const Icon(Icons.folder_open, size: 18),
               label: const Text('选择目录'),
               style: FilledButton.styleFrom(
-                  backgroundColor: Et.primaryBtn,
-                  foregroundColor: Et.primaryBtnText),
+                backgroundColor: Et.primaryBtn,
+                foregroundColor: Et.primaryBtnText,
+              ),
             ),
           ],
         ),
@@ -1192,10 +1377,15 @@ class _SftpDualPageState extends State<SftpDualPage> {
               children: [
                 ListTile(
                   dense: true,
-                  leading: Icon(Icons.arrow_upward,
-                      size: 20, color: Et.textSecondary),
-                  title: const Text('..',
-                      style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+                  leading: Icon(
+                    Icons.arrow_upward,
+                    size: 20,
+                    color: Et.textSecondary,
+                  ),
+                  title: const Text(
+                    '..',
+                    style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5),
+                  ),
                   onTap: () => _upLocal(s),
                 ),
                 Padding(
@@ -1216,61 +1406,177 @@ class _SftpDualPageState extends State<SftpDualPage> {
         if (i == 0 && canUp) {
           return ListTile(
             dense: true,
-            leading:
-                Icon(Icons.arrow_upward, size: 20, color: Et.textSecondary),
-            title: const Text('..',
-                style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5)),
+            leading: Icon(
+              Icons.arrow_upward,
+              size: 20,
+              color: Et.textSecondary,
+            ),
+            title: const Text(
+              '..',
+              style: TextStyle(fontFamily: 'Menlo', fontSize: 13.5),
+            ),
             onTap: () => _upLocal(s),
           );
         }
         final e = entries[i - (canUp ? 1 : 0)];
-        return _FileRow(
+        return _maybeDrag(
+          enabled: dragEnabled && !e.isDir && canUpload,
+          src: s,
           name: e.name,
           isDir: e.isDir,
-          meta: [
-            if (!e.isDir) _fmtSize(e.size),
-            _fmtTime(e.mtime),
-          ].join(' · '),
-          onOpen: e.isDir ? () => _enterLocal(s, e) : null,
-          actions: [
-            if (!e.isDir && canUpload)
+          local: e,
+          buildRow: () => _FileRow(
+            name: e.name,
+            isDir: e.isDir,
+            meta: [
+              if (!e.isDir) _fmtSize(e.size),
+              _fmtTime(e.mtime),
+            ].join(' · '),
+            onOpen: e.isDir ? () => _enterLocal(s, e) : null,
+            actions: [
+              if (!e.isDir && canUpload)
+                _RowAction(
+                  label: '上传到 ${other.label}',
+                  icon: Icons.upload_outlined,
+                  onTap: () => _transfer(s, le: e),
+                ),
               _RowAction(
-                label: '上传到 ${other.label}',
-                icon: Icons.upload_outlined,
-                onTap: () => _transfer(s, le: e),
+                label: '重命名',
+                icon: Icons.drive_file_rename_outline,
+                onTap: () => _rename(s, le: e),
               ),
-            _RowAction(
-              label: '重命名',
-              icon: Icons.drive_file_rename_outline,
-              onTap: () => _rename(s, le: e),
-            ),
-            _RowAction(
-              label: '删除',
-              icon: Icons.delete_outline,
-              destructive: true,
-              onTap: () => _delete(s, le: e),
-            ),
-          ],
+              _RowAction(
+                label: '删除',
+                icon: Icons.delete_outline,
+                destructive: true,
+                onTap: () => _delete(s, le: e),
+              ),
+            ],
+          ),
         );
       },
     );
   }
 
   Widget _note(String text, {bool spinner = false}) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (spinner)
-              const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-            if (spinner) const SizedBox(height: 10),
-            Text(text,
-                style: TextStyle(fontSize: 13, color: Et.textSecondary)),
-          ],
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (spinner)
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        if (spinner) const SizedBox(height: 10),
+        Text(text, style: TextStyle(fontSize: 13, color: Et.textSecondary)),
+      ],
+    ),
+  );
+}
+
+/// 拖放载荷：哪一侧的哪一条。落点只认 sideIndex，路径由 _transfer 按对侧当前目录算。
+class _SftpDrag {
+  _SftpDrag({
+    required this.sideIndex,
+    required this.name,
+    required this.isDir,
+    this.remote,
+    this.local,
+  }) : assert(remote != null || local != null);
+
+  final int sideIndex;
+  final String name;
+  final bool isDir;
+  final sftp.SftpEntry? remote;
+  final _LocalEntry? local;
+}
+
+/// 跟手的文件名芯片。左上角锚在指针上，再往右下偏一点，避免挡住落点。
+class _DragChip extends StatelessWidget {
+  const _DragChip({required this.name, required this.isDir});
+
+  final String name;
+  final bool isDir;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.translate(
+      offset: const Offset(14, 16),
+      child: Material(
+        color: Et.card,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Et.accent),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isDir
+                    ? Icons.folder_outlined
+                    : Icons.insert_drive_file_outlined,
+                size: 16,
+                color: isDir ? Et.tileGroup : Et.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Menlo',
+                    fontSize: 12.5,
+                    color: Et.textPrimary,
+                    decoration: TextDecoration.none,
+                    decorationColor: Et.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      );
+      ),
+    );
+  }
+}
+
+class _DropHighlight extends StatelessWidget {
+  const _DropHighlight();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Et.accent.withValues(alpha: 0.12),
+        border: Border.all(color: Et.accent, width: 2),
+      ),
+      child: Align(
+        alignment: Alignment.center,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: Et.accent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            '松手传到当前目录',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Et.primaryBtnText,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _RowAction {
@@ -1310,18 +1616,23 @@ class _FileRow extends StatelessWidget {
         size: 22,
         color: isDir ? Et.tileGroup : Et.textSecondary,
       ),
-      title: Text(name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              fontFamily: 'Menlo',
-              fontSize: 13.5,
-              fontWeight: isDir ? FontWeight.w600 : FontWeight.w400,
-              color: Et.textPrimary)),
-      subtitle: Text(meta,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 11.5, color: Et.textSecondary)),
+      title: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontFamily: 'Menlo',
+          fontSize: 13.5,
+          fontWeight: isDir ? FontWeight.w600 : FontWeight.w400,
+          color: Et.textPrimary,
+        ),
+      ),
+      subtitle: Text(
+        meta,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11.5, color: Et.textSecondary),
+      ),
       trailing: PopupMenuButton<int>(
         color: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1332,20 +1643,27 @@ class _FileRow extends StatelessWidget {
             PopupMenuItem(
               value: i,
               height: 40,
-              child: Row(children: [
-                Icon(actions[i].icon,
+              child: Row(
+                children: [
+                  Icon(
+                    actions[i].icon,
                     size: 17,
                     color: actions[i].destructive
                         ? Et.danger
-                        : Et.textSecondary),
-                const SizedBox(width: 8),
-                Text(actions[i].label,
+                        : Et.textSecondary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    actions[i].label,
                     style: TextStyle(
-                        fontSize: 13.5,
-                        color: actions[i].destructive
-                            ? Et.danger
-                            : Et.textPrimary)),
-              ]),
+                      fontSize: 13.5,
+                      color: actions[i].destructive
+                          ? Et.danger
+                          : Et.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
             ),
         ],
       ),
@@ -1355,8 +1673,11 @@ class _FileRow extends StatelessWidget {
 }
 
 class _QueueRow extends StatelessWidget {
-  const _QueueRow(
-      {required this.job, required this.onCancel, required this.onRetry});
+  const _QueueRow({
+    required this.job,
+    required this.onCancel,
+    required this.onRetry,
+  });
 
   final SftpTransferJob job;
   final VoidCallback onCancel;
@@ -1368,16 +1689,16 @@ class _QueueRow extends StatelessWidget {
       (SftpJobState.queued) => ('排队中', Et.textSecondary, Icons.hourglass_empty),
       (SftpJobState.running) => ('传输中', Et.tileGroup, Icons.sync),
       (SftpJobState.done) => (
-          '完成',
-          Color(0xFF1A7F37),
-          Icons.check_circle_outline
-        ),
+        '完成',
+        Color(0xFF1A7F37),
+        Icons.check_circle_outline,
+      ),
       (SftpJobState.failed) => ('失败', Et.danger, Icons.error_outline),
       (SftpJobState.canceled) => (
-          '已取消',
-          Et.textSecondary,
-          Icons.cancel_outlined
-        ),
+        '已取消',
+        Et.textSecondary,
+        Icons.cancel_outlined,
+      ),
     };
     final kindLabel = switch (job.kind) {
       SftpJobKind.upload => '上传',
@@ -1389,86 +1710,101 @@ class _QueueRow extends StatelessWidget {
     final total = job.total;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(
-            switch (job.kind) {
-              SftpJobKind.upload => Icons.upload_outlined,
-              SftpJobKind.download => Icons.download_outlined,
-              SftpJobKind.copy => Icons.swap_horiz,
-              SftpJobKind.tarDownload => Icons.folder_zip_outlined,
-              SftpJobKind.copyDir => Icons.folder_copy_outlined,
-            },
-            size: 16,
-            color: Et.textSecondary,
-          ),
-          const SizedBox(width: 6),
-          Text(kindLabel,
-              style: TextStyle(fontSize: 11.5, color: Et.textSecondary)),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(job.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                switch (job.kind) {
+                  SftpJobKind.upload => Icons.upload_outlined,
+                  SftpJobKind.download => Icons.download_outlined,
+                  SftpJobKind.copy => Icons.swap_horiz,
+                  SftpJobKind.tarDownload => Icons.folder_zip_outlined,
+                  SftpJobKind.copyDir => Icons.folder_copy_outlined,
+                },
+                size: 16,
+                color: Et.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                kindLabel,
+                style: TextStyle(fontSize: 11.5, color: Et.textSecondary),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  job.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
                     fontFamily: 'Menlo',
                     fontSize: 13,
-                    color: Et.textPrimary)),
-          ),
-          Icon(icon, size: 15, color: color),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, color: color)),
-          if (!job.isTerminal)
-            IconButton(
-              onPressed: onCancel,
-              tooltip: '取消',
-              icon: Icon(Icons.close, size: 18, color: Et.textSecondary),
-            )
-          else if (job.state == SftpJobState.failed ||
-              job.state == SftpJobState.canceled)
-            IconButton(
-              onPressed: onRetry,
-              tooltip: job.kind == SftpJobKind.tarDownload
-                  ? '重试（重新打包）'
-                  : job.kind == SftpJobKind.copyDir
+                    color: Et.textPrimary,
+                  ),
+                ),
+              ),
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 4),
+              Text(label, style: TextStyle(fontSize: 12, color: color)),
+              if (!job.isTerminal)
+                IconButton(
+                  onPressed: onCancel,
+                  tooltip: '取消',
+                  icon: Icon(Icons.close, size: 18, color: Et.textSecondary),
+                )
+              else if (job.state == SftpJobState.failed ||
+                  job.state == SftpJobState.canceled)
+                IconButton(
+                  onPressed: onRetry,
+                  tooltip: job.kind == SftpJobKind.tarDownload
+                      ? '重试（重新打包）'
+                      : job.kind == SftpJobKind.copyDir
                       ? '重试（跳过已完成文件）'
                       : '重试（断点续传）',
-              icon: Icon(Icons.refresh, size: 18, color: Et.tileGroup),
-            ),
-        ]),
-        // 源 → 目标路径上下文（评审 P2：此前队列行看不出传往哪侧）
-        Tooltip(
-          message: '${job.pathFrom} → ${job.pathTo}',
-          child: Text('${job.pathFrom} → ${job.pathTo}',
+                  icon: Icon(Icons.refresh, size: 18, color: Et.tileGroup),
+                ),
+            ],
+          ),
+          // 源 → 目标路径上下文（评审 P2：此前队列行看不出传往哪侧）
+          Tooltip(
+            message: '${job.pathFrom} → ${job.pathTo}',
+            child: Text(
+              '${job.pathFrom} → ${job.pathTo}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 10.5,
-                  fontFamily: 'Menlo',
-                  color: Et.textSecondary)),
-        ),
-        if (job.state == SftpJobState.running) ...[
-          const SizedBox(height: 2),
-          LinearProgressIndicator(
-            value: total > 0 ? job.transferred / total : null,
-            minHeight: 3,
-            color: Et.accent,
-            backgroundColor: Et.cardBorder,
+                fontSize: 10.5,
+                fontFamily: 'Menlo',
+                color: Et.textSecondary,
+              ),
+            ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            total > 0
-                ? '${_fmtSize(job.transferred)}/${_fmtSize(total)}'
-                : '传输中…',
-            style: TextStyle(fontSize: 11, color: Et.textSecondary),
-          ),
-        ],
-        if (job.error != null && job.state == SftpJobState.failed)
-          Text(job.error!,
+          if (job.state == SftpJobState.running) ...[
+            const SizedBox(height: 2),
+            LinearProgressIndicator(
+              value: total > 0 ? job.transferred / total : null,
+              minHeight: 3,
+              color: Et.accent,
+              backgroundColor: Et.cardBorder,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              total > 0
+                  ? '${_fmtSize(job.transferred)}/${_fmtSize(total)}'
+                  : '传输中…',
+              style: TextStyle(fontSize: 11, color: Et.textSecondary),
+            ),
+          ],
+          if (job.error != null && job.state == SftpJobState.failed)
+            Text(
+              job.error!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Et.danger)),
-      ]),
+              style: TextStyle(fontSize: 11, color: Et.danger),
+            ),
+        ],
+      ),
     );
   }
 }
