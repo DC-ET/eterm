@@ -228,54 +228,61 @@ class _SftpEntryPageState extends State<SftpEntryPage> {
   }
 
   Future<void> _pick(int slot, List<HostView> hosts) async {
-    final result = await showModalBottomSheet<Object?>(
+    // ⚠️ 勿改回 showModalBottomSheet：模态底部弹层贴窗口底边且高度上限 9/16
+    // （bottom_sheet.dart 的 _BottomSheetLayout，isScrollControlled=false 时），
+    // 主机多时底部内容被切在屏幕外、桌面端无滚动条难以察觉，且与 app 内其他
+    // 居中 AlertDialog 风格不一致。
+    final result = await showDialog<Object?>(
       context: context,
-      backgroundColor: Et.card,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text('选择${slot == 0 ? '源' : '目标'}端',
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: Et.textPrimary)),
-            ),
-            ListTile(
-              leading: Icon(Icons.phone_android, color: Et.textSecondary),
-              title: Text('本机',
-                  style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                      color: Et.textPrimary)),
-              subtitle: Text('本机工作区目录',
-                  style: TextStyle(fontSize: 12, color: Et.textSecondary)),
-              onTap: () => Navigator.pop(ctx, const _LocalPick()),
-            ),
-            for (final h in hosts)
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Et.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+        contentPadding: const EdgeInsets.fromLTRB(0, 6, 0, 8),
+        title: Text('选择${slot == 0 ? '源' : '目标'}端',
+            style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: Et.textPrimary)),
+        content: ConstrainedBox(
+          // 高度封顶 60% 屏高：主机再多也整体在屏内，超出部分列表内滚动
+          constraints: BoxConstraints(
+              maxWidth: 460, maxHeight: MediaQuery.sizeOf(ctx).height * 0.6),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            children: [
               ListTile(
-                leading: Icon(Icons.dns, color: Et.tileHost),
-                title: Text(h.label,
+                leading: Icon(Icons.phone_android, color: Et.textSecondary),
+                title: Text('本机',
                     style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
                         color: Et.textPrimary)),
-                subtitle: Text('${h.username}@${h.hostname}',
+                subtitle: Text('本机工作区目录',
                     style: TextStyle(fontSize: 12, color: Et.textSecondary)),
-                trailing: widget.app.credentialFor(h).available
-                    ? null
-                    : Text('无凭据',
-                        style: TextStyle(
-                            fontSize: 11.5,
-                            color: const Color(0xFFC77B27))),
-                onTap: () => Navigator.pop(ctx, h),
+                onTap: () => Navigator.pop(ctx, const _LocalPick()),
               ),
-          ],
+              for (final h in hosts)
+                ListTile(
+                  leading: Icon(Icons.dns, color: Et.tileHost),
+                  title: Text(h.label,
+                      style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                          color: Et.textPrimary)),
+                  subtitle: Text('${h.username}@${h.hostname}',
+                      style: TextStyle(fontSize: 12, color: Et.textSecondary)),
+                  trailing: widget.app.credentialFor(h).available
+                      ? null
+                      : Text('无凭据',
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              color: const Color(0xFFC77B27))),
+                  onTap: () => Navigator.pop(ctx, h),
+                ),
+            ],
+          ),
         ),
       ),
     );
