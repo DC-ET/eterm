@@ -14,8 +14,11 @@ import * as userstore from "../src/store/userstore.ts";
 let a: TestFixture; // 主库：同库内建两个 vault（受害者 userA / 攻击者 userB）
 let vaultB = ""; // 攻击者 vault
 let engA: SyncEngine;
+// 未设 ETERM_TEST_DSN 则跳过（见 helpers 注释）
+const hasDb = !!process.env.ETERM_TEST_DSN;
 
 beforeEach(async () => {
+  if (!hasDb) return;
   a = await newTestFixture("userA");
   const attackerId = await userstore.createUser(a.db, "userB", "fake-hash");
   vaultB = await userstore.createPersonalVault(a.db, attackerId, "userB-personal");
@@ -23,10 +26,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (!hasDb) return;
   await a.cleanup();
 });
 
-describe("code review bug verification", () => {
+describe.runIf(hasDb)("code review bug verification", () => {
   it("BUG-1a: push 跨 vault 读 —— 他 vault 实体冲突响应泄露明文 server_data", async () => {
     const devA = newDevice();
     const iid = uuidv7();

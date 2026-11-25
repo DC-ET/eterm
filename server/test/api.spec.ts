@@ -16,8 +16,11 @@ let f: TestFixture;
 let app: ReturnType<typeof buildApp>;
 let token = "";
 const PEPPER = "test-pepper";
+// 未设 ETERM_TEST_DSN 则跳过（见 helpers 注释）
+const hasDb = !!process.env.ETERM_TEST_DSN;
 
 beforeAll(async () => {
+  if (!hasDb) return;
   f = await newTestFixture("alice-owner", true);
   const hash = await hashPassword("alice-password", PEPPER);
   const aliceId = await userstore.createUser(f.db, "alice", hash);
@@ -48,7 +51,7 @@ function doReq(method: string, url: string, tok: string, body?: unknown) {
   });
 }
 
-describe("auth & sync flow", () => {
+describe.runIf(hasDb)("auth & sync flow", () => {
   it("未认证 401", async () => {
     const r = await doReq("GET", "/api/v1/me", "");
     expect(r.statusCode).toBe(401);
@@ -127,7 +130,7 @@ describe("auth & sync flow", () => {
   });
 });
 
-describe("ws broadcast", () => {
+describe.runIf(hasDb)("ws broadcast", () => {
   it("推送后收到广播帧", async () => {
     const login = await doReq("POST", "/api/v1/auth/login", "", {
       username: "alice",
@@ -242,7 +245,7 @@ describe("ws broadcast", () => {
   });
 });
 
-describe("login rate limit", () => {
+describe.runIf(hasDb)("login rate limit", () => {
   it("连续登录触发 429", async () => {
     let last = 0;
     for (let i = 0; i < 12; i++) {

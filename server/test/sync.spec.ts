@@ -9,17 +9,22 @@ import { newTestFixture, pushOne, hostData, newDevice, type TestFixture } from "
 // 与 Go 版一致：每个用例独立数据库（随机命名 + 迁移 + 清理）
 let f: TestFixture;
 let eng: SyncEngine;
+// helpers 注释约定：未设 ETERM_TEST_DSN 则跳过集成用例（本地/CI 无 MySQL 时
+// npm test 仍应全绿）。hooks 也要守卫：部分 Vitest 版本对全跳过套件仍执行钩子。
+const hasDb = !!process.env.ETERM_TEST_DSN;
 
 beforeEach(async () => {
+  if (!hasDb) return;
   f = await newTestFixture();
   eng = new SyncEngine(f.db, new Hub());
 });
 
 afterEach(async () => {
+  if (!hasDb) return;
   await f.cleanup();
 });
 
-describe("sync protocol", () => {
+describe.runIf(hasDb)("sync protocol", () => {
   it("push/pull 往返 + 加密字段", async () => {
     const dev = newDevice();
     const id = uuidv7();
