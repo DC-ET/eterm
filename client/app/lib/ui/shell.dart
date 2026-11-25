@@ -3,6 +3,10 @@
 // 窄屏（手机竖屏，<720）响应式：侧边导航换成底部导航栏，内容区满幅。
 // IndexedStack 保持后台终端标签的会话存活。
 
+// window_manager 0.7 的 0.5 兼容 API（WindowListener/DragToMoveArea 等）仍是
+// 当前唯一可用路径（AGENTS：勿降级），弃用提示在此集中屏蔽以免污染 CI 门禁。
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
@@ -472,7 +476,7 @@ class _ShellPageState extends State<ShellPage>
               ),
             ),
             // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
-            if (bar != null) bar,
+            ?bar,
           ],
         ),
       final SftpWorkTab t =>
@@ -487,7 +491,7 @@ class _ShellPageState extends State<ShellPage>
                 status: t.status,
               ),
             ),
-            if (bar != null) bar,
+            ?bar,
           ],
         ),
     };

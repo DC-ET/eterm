@@ -4,6 +4,10 @@
 //   无会话/探活 401：登录页。
 // Rust 侧经 frb 提供 SSH 会话、字段加解密与本地库（crate rust_lib_eterm）。
 
+// window_manager 0.7 的 0.5 兼容 API（windowManager/WindowOptions）仍是当前
+// 唯一可用路径（AGENTS：勿降级），弃用提示在此集中屏蔽以免污染 CI 门禁。
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:io' show Platform;
 

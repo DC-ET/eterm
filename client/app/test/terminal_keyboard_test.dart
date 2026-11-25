@@ -4,7 +4,7 @@
 // 背景：Windows 首验时终端「命令无输出」实为注入伪影，数据链路字节级验证通畅
 // （MOTD/提示符/回车响应均正确渲染）；本测试锁定键盘输入路径不回归。
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';

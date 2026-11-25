@@ -1,7 +1,7 @@
 // 复现 app 实况：home(_Boot) → pushReplacement(MaterialPageRoute) 后切主题，
 // 验证 pushed 路由是否随根 ListenableBuilder → MaterialApp 重建而重建。
 import 'package:eterm/ui/theme.dart';
-import 'package:flutter/material.dart' show MaterialPageRoute;
+import 'package:material_ui/material_ui.dart' show MaterialPageRoute;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' as mui;
