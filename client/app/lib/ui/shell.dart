@@ -11,7 +11,6 @@ import 'package:flutter/services.dart';
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:material_ui/material_ui.dart';
 import 'package:window_manager/legacy.dart'; // 标题栏 DragToMoveArea/WindowListener（AGENTS：0.7 旧 API 走 legacy）
-import 'package:xterm/xterm.dart';
 
 import '../services/api_client.dart';
 import '../services/fg_service.dart';
@@ -28,6 +27,7 @@ import 'sftp_page.dart';
 import 'terminal_tab.dart';
 import 'login_page.dart';
 import 'theme.dart';
+import 'work_tabs.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({
@@ -45,23 +45,21 @@ class ShellPage extends StatefulWidget {
   State<ShellPage> createState() => _ShellPageState();
 }
 
-class _TerminalTab {
-  _TerminalTab(this.host, this.authKind, this.secret) : key = UniqueKey();
-  final UniqueKey key;
-  final HostView host;
-  final String authKind; // password | key
-  final String secret;
-  final Terminal terminal = Terminal(maxLines: 20000);
-  /// 会话阶段（pill 状态点，评审 P2：断连此前无感知）
-  final phase = ValueNotifier<TermPhase>(TermPhase.connecting);
-}
+WorkTabPhase _workPhaseOfTerm(TermPhase p) => switch (p) {
+  TermPhase.connecting => WorkTabPhase.connecting,
+  TermPhase.live => WorkTabPhase.live,
+  TermPhase.closed => WorkTabPhase.closed,
+};
 
-class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
-  final tabs = <_TerminalTab>[];
+class _ShellPageState extends State<ShellPage>
+    with WidgetsBindingObserver, WindowListener {
+  final tabs = <WorkTab>[];
   int activeTab = -1; // -1 = vault 视图；否则 tabs 下标
   int navIndex = 0; // 侧边导航（0=Hosts）
   DateTime? _lastPausedAt; // D13 防抖：最近一次 paused
   DateTime? _lastProbeAt; // D13 防抖：最近一次回前台探测
+  DateTime? _lastFocusProbeAt; // 桌面窗口聚焦探活节流（D16：≥30s）
+  bool _closing = false; // 关闭确认弹窗防双击（方案 §4.5.2）
 
   void openTerminal(HostView h) {
     final cred = widget.app.credentialFor(h);
@@ -71,19 +69,60 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       );
       return;
     }
-    final existing = tabs.indexWhere((t) => t.host.id == h.id);
+    final existing = tabs.indexWhere(
+      (t) => t is TerminalWorkTab && t.host.id == h.id,
+    );
     setState(() {
       if (existing >= 0) {
         activeTab = existing; // 复用已开终端
       } else {
-        tabs.add(_TerminalTab(h, cred.authKind, cred.secret));
+        tabs.add(
+          TerminalWorkTab(
+            key: GlobalKey(),
+            host: h,
+            authKind: cred.authKind,
+            secret: cred.secret,
+          ),
+        );
         activeTab = tabs.length - 1;
       }
     });
     FgService.setKeepAlive(tabs.isNotEmpty); // 前台服务保活 SSH（M1）
   }
 
-  /// 主机卡片菜单「SFTP 文件」：host ⇄ 本机 直达双侧页（凭据与终端同一解析链）。
+  /// 打开 SFTP 工作区标签；同一无序端点对（A⇄B == B⇄A）复用已有标签。
+  void openSftp({required SftpSideSpec left, required SftpSideSpec right}) {
+    final pair = sftpPairKey(left, right);
+    final existing = tabs.indexWhere(
+      (t) => t is SftpWorkTab && t.dedupeKey == pair,
+    );
+    setState(() {
+      if (existing >= 0) {
+        activeTab = existing;
+      } else {
+        tabs.add(
+          SftpWorkTab(key: GlobalKey(), left: left, right: right),
+        );
+        activeTab = tabs.length - 1;
+      }
+    });
+    if (existing >= 0) {
+      // 反向打开（B⇄A）：聚焦已有 A⇄B 标签，提示可直接从请求的左侧操作；
+      // 不重建标签（方案 D4/P2-19）。
+      final tab = tabs[existing] as SftpWorkTab;
+      String sideId(SftpSideSpec s) => s.host?.id ?? 'local';
+      if (sideId(tab.left) != sideId(left)) {
+        final from = left.host?.label ?? '本机';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已切到现有「${tab.label}」标签，可直接从$from侧拖拽')),
+        );
+      }
+    }
+    FgService.setKeepAlive(tabs.isNotEmpty);
+  }
+
+  /// 主机卡片菜单「SFTP 文件」：host ⇄ 本机 直达工作区标签
+  /// （凭据与终端同一解析链）。
   void _openSftpFor(HostView h) {
     final cred = widget.app.credentialFor(h);
     if (cred == null) {
@@ -92,29 +131,84 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       );
       return;
     }
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SftpDualPage(
-        left: SftpSideSpec(host: h, authKind: cred.authKind, secret: cred.secret),
-        right: const SftpSideSpec(), // 本机
-      ),
-    ));
+    openSftp(
+      left: SftpSideSpec(host: h, authKind: cred.authKind, secret: cred.secret),
+      right: const SftpSideSpec(), // 本机
+    );
   }
 
-  void closeTab(int i) {
+  /// 关闭标签。SFTP 标签有进行中传输时先确认（关闭会取消这些传输）。
+  Future<void> closeTab(int i) async {
+    if (_closing || i < 0 || i >= tabs.length) return;
+    final target = tabs[i];
+    if (target is SftpWorkTab) {
+      final running = target.status.value.activeTransfers;
+      if (running > 0) {
+        _closing = true;
+        bool? ok;
+        try {
+          ok = await _confirmCloseSftp(target.label, running);
+        } finally {
+          _closing = false;
+        }
+        if (ok != true || !mounted) return;
+      }
+    }
+    // await 后按身份重新定位：期间标签可能被其他路径关闭/登出清栈
+    final idx = tabs.indexOf(target);
+    if (idx < 0) return;
     setState(() {
-      tabs.removeAt(i);
-      // phase notifier 不在这里 dispose：TerminalTabView State 帧末才销毁，
-      // 期间 SSH 事件仍可能经 onPhase 回写（复审必修 A：use-after-dispose）。
+      tabs.removeAt(idx);
+      // phase notifier 不在这里 dispose：TerminalTabView/SftpWorkspace State
+      // 帧末才销毁，期间异步事件仍可能回写（use-after-dispose）。
       // ValueListenableBuilder unmount 自行解绑，无监听的 notifier 交给 GC。
       if (tabs.isEmpty) {
         activeTab = -1;
-      } else if (i < activeTab) {
+      } else if (idx < activeTab) {
         activeTab -= 1; // 评审 BUG-D2 回归：关闭左侧标签后仍查看同一会话
       } else if (activeTab >= tabs.length) {
         activeTab = tabs.length - 1;
       }
     });
     FgService.setKeepAlive(tabs.isNotEmpty);
+  }
+
+  Future<bool?> _confirmCloseSftp(String label, int running) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Et.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          '关闭 $label？',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Et.textPrimary,
+          ),
+        ),
+        content: Text(
+          '该标签还有 $running 个传输进行中。关闭将取消传输；未完成暂存'
+          '（.eterm-part）会保留，但重开标签需重新发起。',
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.5,
+            color: Et.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('取消', style: TextStyle(color: Et.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Et.danger),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _logout() async {
@@ -125,8 +219,12 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     } catch (_) {}
     local.clearLocal(); // 会话 + 本地缓存一并清理
     if (!mounted) return;
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+    // pushAndRemoveUntil 清空整栈：编辑页等子路由的 PopScope 拦截不会挡住
+    // 清栈（pushReplacement 只换当前路由，脏编辑页会残留在最上层）。
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
   }
 
   /// token 失效（401）：静默回登录页。
@@ -135,22 +233,46 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     FgService.setKeepAlive(false);
     local.clearLocal();
     if (!mounted) return;
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+    // pushAndRemoveUntil 清空整栈：编辑页等子路由的 PopScope 拦截不会挡住
+    // 清栈（pushReplacement 只换当前路由，脏编辑页会残留在最上层）。
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
   }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this); // D13：回前台探测（移动端）
+    if (Platform.isMacOS || Platform.isWindows) {
+      // 桌面无 resumed（窗口聚焦是噪声），但 SFTP 无 Closed 事件：
+      // 聚焦时对当前可见 SFTP 标签探活，节流 ≥30s（D16）
+      windowManager.addListener(this);
+    }
     widget.app.addListener(_appChanged);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (Platform.isMacOS || Platform.isWindows) {
+      windowManager.removeListener(this);
+    }
     widget.app.removeListener(_appChanged);
     super.dispose();
+  }
+
+  /// 桌面窗口重新聚焦：仅当前可见 SFTP 标签、节流 ≥30s 做探活（D16）。
+  @override
+  void onWindowFocus() {
+    final now = DateTime.now();
+    if (_lastFocusProbeAt != null &&
+        now.difference(_lastFocusProbeAt!) < const Duration(seconds: 30)) {
+      return;
+    }
+    _lastFocusProbeAt = now;
+    sftpWorkspacesProbeVisible();
   }
 
   /// D13 生命周期（方案 §4.2）：回前台探测。桌面不参与——macOS 每次窗口
@@ -161,6 +283,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused) {
       _lastPausedAt = DateTime.now();
       terminalTabsOnAppPaused(); // 登记 tab 挂起前存活状态（exit/失败的 closed 不参与自动重连）
+      sftpWorkspacesOnAppPaused(); // SFTP 远端侧同口径：只探活挂起前 live 的
       return;
     }
     if (state != AppLifecycleState.resumed) return;
@@ -177,6 +300,7 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
     realtime.probe(); // ① WS 断则立即重连（不等退避）
     unawaited(widget.app.refresh(silent: true)); // ② 静默对账
     terminalTabsOnAppResume(); // ③ 终端标签逐个重连/武装窗口
+    sftpWorkspacesOnAppResume(); // ④ SFTP 远端侧探活/重连（含队列 session 重绑）
   }
 
   void _appChanged() {
@@ -197,11 +321,17 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       0 => HostsPage(
           app: widget.app,
           onOpenTerminal: openTerminal,
-          openHostIds: {for (final t in tabs) t.host.id},
+          openHostIds: {
+            for (final t in tabs)
+              if (t is TerminalWorkTab) t.host.id,
+          },
           onOpenSettings: () => setState(() => navIndex = 6),
           onOpenSftp: _openSftpFor,
         ),
-      1 => SftpEntryPage(app: widget.app),
+      1 => SftpEntryPage(
+          app: widget.app,
+          onOpen: (left, right) => openSftp(left: left, right: right),
+        ),
       2 => KeychainPage(app: widget.app),
       3 => PortForwardingPage(app: widget.app),
       // 勿加 const：Shell 随主题重建时 const 实例会被 Flutter 跳过（identical）
@@ -251,48 +381,32 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       index: activeTab + 1,
       children: [
         vaultView,
-        // 终端 child 结构对 compact 恒定（Column + Expanded）：
-        // 旋转/分屏跨断点时仅属性变化，State 复用 → SSH 会话不断（P1-6）
-        for (final t in tabs)
-          Column(
-            children: [
-              Expanded(
-                child: TerminalTabView(
-                  key: t.key,
-                  host: t.host,
-                  terminal: t.terminal,
-              authKind: t.authKind,
-              secret: t.secret,
-              onPhase: (p) => t.phase.value = p, // pill 状态点同步
-            ),
-              ),
-              // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
-              if (compact)
-                _MobileTabBar(
-                  tabs: tabs,
-                  activeTab: activeTab,
-                  onSelectVault: () => setState(() => activeTab = -1),
-                  onSelectTab: (i) => setState(() => activeTab = i),
-                  onCloseTab: closeTab,
-                  onAdd: () => setState(() => activeTab = -1),
-                ),
-            ],
-          ),
+        // 每个标签 child 结构对 compact 恒定（Column + Expanded）：旋转/分屏
+        // 跨断点时仅属性变化，State 复用 → SSH 会话不断（P1-6）。
+        // TickerMode：隐藏标签停动画（SFTP 进度条/旋转），State 仍全量存活。
+        for (var i = 0; i < tabs.length; i++) _tabChild(tabs[i], i, compact),
       ],
     );
     // 顶部结构（Android 状态栏避让的正确层级）：
     // - 桌面：深色标题栏背景延伸到状态栏区（SafeArea 推内容行），图标 light
     // - 手机：无深色标题栏（账号入口在各页 app bar），浅色状态栏 dark 图标；
     //   终端视图由 TerminalTabView 自带深色状态栏区（内部 SafeArea，light 图标）
+    // 手机状态栏：终端标签有深色状态栏区（light 图标）；SFTP 标签是浅色
+    // 工具条 + 卡片，必须 dark 图标，否则蓝底黑字看不清（方案 §4.5）。
+    final activeKind =
+        activeTab >= 0 && activeTab < tabs.length ? tabs[activeTab].kind : null;
+    final lightStatusIcons =
+        (compact && activeKind == WorkTabKind.terminal) ||
+        Et.brightness == Brightness.dark;
     return PopScope<Object?>(
       canPop: activeTab == -1,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && activeTab >= 0) setState(() => activeTab = -1);
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
-      value: compact && activeTab >= 0 || Et.brightness == Brightness.dark
+      value: lightStatusIcons
           ? SystemUiOverlayStyle.light // 手机终端深色区 / 深色主题
-          : SystemUiOverlayStyle.dark, // 浅色列表页 / 桌面无状态栏
+          : SystemUiOverlayStyle.dark, // 浅色列表页/SFTP / 桌面无状态栏
       child: Scaffold(
       backgroundColor: Et.contentBg,
       body: Column(
@@ -321,6 +435,59 @@ class _ShellPageState extends State<ShellPage> with WidgetsBindingObserver {
       ),
     );
   }
+
+  Widget _tabChild(WorkTab tab, int index, bool compact) {
+    final active = activeTab == index;
+    final bar = compact
+        ? _MobileTabBar(
+            tabs: tabs,
+            activeTab: activeTab,
+            onSelectVault: () => setState(() => activeTab = -1),
+            onSelectTab: (i) => setState(() => activeTab = i),
+            onCloseTab: closeTab,
+            onAdd: () => setState(() => activeTab = -1),
+          )
+        : null;
+    final content = switch (tab) {
+      final TerminalWorkTab t =>
+        Column(
+          children: [
+            Expanded(
+              child: TerminalTabView(
+                key: t.key,
+                host: t.host,
+                terminal: t.terminal,
+                authKind: t.authKind,
+                secret: t.secret,
+                // pill 状态点同步（TermPhase → 统一 WorkTabPhase）
+                onPhase: (p) => t.status.value = WorkTabStatus(
+                  phase: _workPhaseOfTerm(p),
+                ),
+              ),
+            ),
+            // 手机：标签条吸底（Termius 式 ←/标签/+）；终端满幅无深色标题栏
+            if (bar != null) bar,
+          ],
+        ),
+      final SftpWorkTab t =>
+        Column(
+          children: [
+            Expanded(
+              child: SftpWorkspace(
+                key: t.key,
+                left: t.left,
+                right: t.right,
+                visible: active,
+                status: t.status,
+              ),
+            ),
+            if (bar != null) bar,
+          ],
+        ),
+    };
+    // 隐藏标签停动画（终端光标/进度条），State 仍全量存活（方案 A.3）
+    return TickerMode(enabled: active, child: content);
+  }
 }
 
 // ---------- 窄屏底部导航 ----------
@@ -342,6 +509,15 @@ int _compactNavIndex(int navIndex) {
   return 3; // 经 More 进入的实页（navIndex 3-6）：底栏高亮 More
 }
 
+/// 标签状态点配色：green=live / 灰=连接中 / 橙=degraded / 红=closed。
+Color _statusColor(WorkTabPhase phase, {required Color connecting}) =>
+    switch (phase) {
+      WorkTabPhase.live => const Color(0xFF2DA44E),
+      WorkTabPhase.connecting => connecting,
+      WorkTabPhase.degraded => const Color(0xFFC77B27),
+      WorkTabPhase.closed => Et.danger,
+    };
+
 // ---------- 手机终端标签条（吸底，Termius 式） ----------
 
 class _MobileTabBar extends StatelessWidget {
@@ -354,7 +530,7 @@ class _MobileTabBar extends StatelessWidget {
     required this.onAdd,
   });
 
-  final List<_TerminalTab> tabs;
+  final List<WorkTab> tabs;
   final int activeTab;
   final VoidCallback onSelectVault;
   final void Function(int) onSelectTab;
@@ -426,26 +602,46 @@ class _MobileTabBar extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 会话状态点（评审 P2：连接中/已连接/断开 可感知）
-            ValueListenableBuilder<TermPhase>(
-              valueListenable: tabs[i].phase,
-              builder: (context, ph, _) => Container(
-                width: 7,
-                height: 7,
-                margin: const EdgeInsets.only(right: 6),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: switch (ph) {
-                    TermPhase.live => const Color(0xFF2DA44E),
-                    TermPhase.connecting => Et.textSecondary,
-                    TermPhase.closed => Et.danger,
-                  },
-                ),
+            // 会话/传输状态点 + 传输计数（标签保活的核心可感知信息）
+            ValueListenableBuilder<WorkTabStatus>(
+              valueListenable: tabs[i].status,
+              builder: (context, st, _) => Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    margin: const EdgeInsets.only(right: 6),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _statusColor(st.phase, connecting: Et.textSecondary),
+                    ),
+                  ),
+                  if (st.activeTransfers > 0) ...[
+                    Icon(Icons.swap_vert,
+                        size: 12, color: Et.textSecondary),
+                    Text('${st.activeTransfers}',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Et.textSecondary)),
+                    const SizedBox(width: 3),
+                  ],
+                  if (st.failedTransfers > 0) ...[
+                    Icon(Icons.error_outline, size: 12, color: Et.danger),
+                    Text('${st.failedTransfers}',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Et.danger)),
+                    const SizedBox(width: 2),
+                  ],
+                ],
               ),
             ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 170),
-              child: Text(tabs[i].host.label,
+              child: Text(tabs[i].label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -483,7 +679,7 @@ class _TitleBar extends StatefulWidget {
     required this.onCloseTab,
   });
 
-  final List<_TerminalTab> tabs;
+  final List<WorkTab> tabs;
   final int activeTab;
   final VoidCallback onSelectVault;
   final void Function(int) onSelectTab;
@@ -568,9 +764,10 @@ class _TitleBarState extends State<_TitleBar> with WindowListener {
               children: [
                 for (var i = 0; i < widget.tabs.length; i++)
                   _TermTabPill(
-                    label: widget.tabs[i].host.label,
+                    label: widget.tabs[i].label,
+                    kind: widget.tabs[i].kind,
                     active: widget.activeTab == i,
-                    phase: widget.tabs[i].phase,
+                    status: widget.tabs[i].status,
                     onTap: () => widget.onSelectTab(i),
                     onClose: () => widget.onCloseTab(i),
                     maxLabelWidth: 160,
@@ -702,7 +899,8 @@ class _TermTabPill extends StatelessWidget {
     required this.active,
     required this.onTap,
     required this.onClose,
-    this.phase,
+    this.kind = WorkTabKind.terminal,
+    this.status,
     this.maxLabelWidth = 160,
   });
 
@@ -710,7 +908,8 @@ class _TermTabPill extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
   final VoidCallback onClose;
-  final ValueNotifier<TermPhase>? phase; // 会话状态点（null 不显示）
+  final WorkTabKind kind;
+  final ValueNotifier<WorkTabStatus>? status; // 会话状态点（null 不显示）
   final double maxLabelWidth;
 
   @override
@@ -729,7 +928,13 @@ class _TermTabPill extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.terminal, size: 15, color: Et.titleBarText.withAlpha(active ? 255 : 130)),
+                Icon(
+                  kind == WorkTabKind.sftp
+                      ? Icons.folder_copy_outlined
+                      : Icons.terminal,
+                  size: 15,
+                  color: Et.titleBarText.withAlpha(active ? 255 : 130),
+                ),
                 const SizedBox(width: 7),
                 ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: maxLabelWidth),
@@ -739,23 +944,46 @@ class _TermTabPill extends StatelessWidget {
                           color: Et.titleBarText.withAlpha(active ? 255 : 150),
                           fontSize: 13)),
                 ),
-                if (phase != null) ...[
+                if (status != null) ...[
                   const SizedBox(width: 6),
-                  // 会话状态点（评审 P2：断连此前无感知）
-                  ValueListenableBuilder<TermPhase>(
-                    valueListenable: phase!,
-                    builder: (context, ph, _) => Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: switch (ph) {
-                          TermPhase.live => const Color(0xFF2DA44E),
-                          TermPhase.connecting =>
-                            Et.titleBarText.withAlpha(150),
-                          TermPhase.closed => Et.danger,
-                        },
-                      ),
+                  // 状态点 + 传输计数（断连/失败/传输中都可感知）
+                  ValueListenableBuilder<WorkTabStatus>(
+                    valueListenable: status!,
+                    builder: (context, st, _) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _statusColor(
+                              st.phase,
+                              connecting: Et.titleBarText.withAlpha(150),
+                            ),
+                          ),
+                        ),
+                        if (st.activeTransfers > 0) ...[
+                          const SizedBox(width: 4),
+                          Icon(Icons.swap_vert,
+                              size: 12, color: Et.titleBarText.withAlpha(180)),
+                          Text('${st.activeTransfers}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Et.titleBarText.withAlpha(180))),
+                          const SizedBox(width: 3),
+                        ],
+                        if (st.failedTransfers > 0) ...[
+                          Icon(Icons.error_outline,
+                              size: 12, color: Et.danger),
+                          Text('${st.failedTransfers}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Et.danger)),
+                          const SizedBox(width: 2),
+                        ],
+                      ],
                     ),
                   ),
                 ],

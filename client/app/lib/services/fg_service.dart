@@ -1,5 +1,5 @@
-// Android 前台服务（终端连接保持）：有活跃终端标签时启动常驻通知，
-// 防止应用退后台后进程被冻结、SSH 数据面被掐断（技术方案 M1 三件套之一）。
+// Android 前台服务（会话连接保持）：有活跃工作区标签（终端 / SFTP）时启动
+// 常驻通知，防止应用退后台后进程被冻结、SSH 数据面被掐断（M1 三件套之一）。
 // 其他平台为 no-op；MethodChannel 未注册（桌面/测试）时静默忽略。
 
 import 'dart:io' show Platform;
@@ -11,7 +11,7 @@ class FgService {
 
   static const MethodChannel _channel = MethodChannel('eterm/fg');
 
-  /// active = 有活跃终端标签。
+  /// active = 有活跃工作区标签（TerminalWorkTab 或 SftpWorkTab）。
   static void setKeepAlive(bool active) {
     if (!Platform.isAndroid) return;
     try {

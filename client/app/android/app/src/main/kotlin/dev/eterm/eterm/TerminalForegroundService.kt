@@ -10,12 +10,12 @@ import android.os.Build
 import android.os.IBinder
 
 /**
- * 终端连接保持前台服务（技术方案 M1：Android 壳三件套之一）。
+ * 会话连接保持前台服务（技术方案 M1：Android 壳三件套之一）。
  *
- * 有活跃终端标签时由 Dart 侧经 MethodChannel("eterm/fg") 启动；常驻低优先级
- * 通知，防止系统在应用退后台后冻结进程、掐断 SSH 数据面连接（架构铁律：
- * 客户端与目标服务器本地直连，断连即业务中断）。关闭最后一个终端标签时由
- * Dart 侧经 stopService 停止（后台合法且幂等，见 MainActivity 注释）。
+ * 有活跃工作区标签（终端 / SFTP）时由 Dart 侧经 MethodChannel("eterm/fg")
+ * 启动；常驻低优先级通知，防止系统在应用退后台后冻结进程、掐断 SSH 数据面
+ * 连接（架构铁律：客户端与目标服务器本地直连，断连即业务中断）。关闭最后
+ * 一个标签时由 Dart 侧经 stopService 停止（后台合法且幂等，见 MainActivity）。
  */
 class TerminalForegroundService : Service() {
 
@@ -45,7 +45,9 @@ class TerminalForegroundService : Service() {
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "终端连接",
+                    // CHANNEL_ID 保留 "terminal"：改名/改 id 会让老用户多出一条
+                    // 重复通知渠道；展示名与正文改为会话口径即可（含 SFTP）。
+                    "会话连接",
                     NotificationManager.IMPORTANCE_MIN,
                 ).apply { setShowBadge(false) }
             )
@@ -58,7 +60,7 @@ class TerminalForegroundService : Service() {
         }
         return builder
             .setContentTitle("eterm")
-            .setContentText("终端连接保持中")
+            .setContentText("终端 / SFTP 会话保持中")
             .setSmallIcon(applicationInfo.icon)
             .setOngoing(true)
             .build()

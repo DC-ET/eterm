@@ -62,9 +62,10 @@ class SftpTransferJob {
   /// 展示名（两端同名冲突改写后以实际入队名为准）。
   final String name;
   /// 源会话（null = 本地）。tarDownload 用 specFrom 独立建连。
-  final BigInt? sessionFrom;
-  /// 目标会话（null = 本地）。
-  final BigInt? sessionTo;
+  /// 可变：SFTP 标签断线重连后 session id 会换，队列任务需重绑（D10）。
+  BigInt? sessionFrom;
+  /// 目标会话（null = 本地）。可变态同 sessionFrom。
+  BigInt? sessionTo;
   final SftpRemoteSpec? specFrom;
   /// 重试（或用户显式续传）时置 true：Rust 从 .eterm-part 暂存续传。
   bool resume;
@@ -152,6 +153,11 @@ class SftpTransferQueue extends ChangeNotifier {
   final List<SftpTransferJob> jobs = [];
   bool _disposed = false;
 
+  /// 重绑窗口：旧会话已 disconnect、新会话尚未就绪期间，挂旧 id 的 queued
+  /// 任务不得被 _pump 启动（否则 Rust get(oldId) 必失败，整批排队任务被误杀）。
+  /// 由 beginRebind/rebindSession/endRebind 成对维护。
+  final Set<BigInt> _rebindHolds = {};
+
   /// dispose 后取消/失败等迟到流事件只改任务字段，不再通知（避免 assert）。
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -237,6 +243,101 @@ class SftpTransferQueue extends ChangeNotifier {
     _pump();
   }
 
+  /// 开始重绑窗口（在断开旧会话之前调用）。
+  void beginRebind(BigInt oldId) {
+    if (_disposed) return;
+    _rebindHolds.add(oldId);
+  }
+
+  /// 结束重绑窗口（重连失败、没有新会话可绑时调用）：解除 held 并补位。
+  void endRebind(BigInt oldId) {
+    if (_disposed) return;
+    _rebindHolds.remove(oldId);
+    _pump();
+  }
+
+  /// 任务是否挂在某个重绑窗口的旧会话上（tarDownload 走独立 spec，不受影响）。
+  bool _isHeld(SftpTransferJob j) {
+    // 只有 tarDownload 走 specFrom 独立连接；download/copy 也带 specFrom
+    // 但实际用的是 sessionFrom/sessionTo，不能误排除。
+    if (j.kind == SftpJobKind.tarDownload) return false;
+    final from = j.sessionFrom;
+    final to = j.sessionTo;
+    return (from != null && _rebindHolds.contains(from)) ||
+        (to != null && _rebindHolds.contains(to));
+  }
+
+  /// 该会话上是否有真正在跑的传输（不含 tarDownload 的独立连接）。
+  /// 探活超时时据此判断“通道忙”还是“连接死”，避免误杀健康会话（P1-2）。
+  bool hasRunningForSession(BigInt id) => jobs.any(
+    (j) =>
+        j.state == SftpJobState.running &&
+        j.kind != SftpJobKind.tarDownload &&
+        (j.sessionFrom == id || j.sessionTo == id),
+  );
+
+  /// 旧会话失效时：其上 running 的任务标 failed 释放并发槽，提示用户重试。
+  /// queued 默认不动（等 [rebindSession] 改绑新会话）；[includeQueued] 用于
+  /// 「重连失败、暂时没有新会话」：排队任务若留着旧 id，任何一次 _pump 都会
+  /// 拿死会话启动，必须一并置 failed，待重连成功后 rebind 再让用户重试。
+  void failJobsForSession(
+    BigInt oldId, {
+    required String reason,
+    bool includeQueued = false,
+  }) {
+    if (_disposed) return;
+    var changed = false;
+    for (final j in jobs) {
+      if (j.isTerminal) continue;
+      if (j.kind == SftpJobKind.tarDownload) {
+        continue; // 独立 spec 建连，不受会话断开影响
+      }
+      if (j.state == SftpJobState.queued && !includeQueued) continue;
+      if (j.sessionFrom == oldId || j.sessionTo == oldId) {
+        if (j.state == SftpJobState.running) {
+          // 必须真正取消：否则旧 writer 可能继续写同一 .eterm-part，
+          // 用户重试后两个 writer 并发（P0-2）。取消订阅避免迟到事件再 _pump。
+          _transport.cancel(jobId: j.jobId);
+          final sub = j._sub;
+          j._sub = null;
+          if (sub != null) unawaited(sub.cancel());
+        }
+        j.state = SftpJobState.failed;
+        j.error = reason;
+        changed = true;
+      }
+    }
+    if (changed) _notify();
+    // 不在这里 _pump：排队任务还挂着旧 session id，先补位会拿死会话启动；
+    // 由随后的 rebindSession 改绑后统一补位（方案 P2-2）。
+  }
+
+  /// 把队列任务上的旧会话 id 改绑到重连后的新 id：包括 queued、failed 与
+  /// running（调用前 running 已由 [failJobsForSession] 置 failed）。
+  /// 末尾 [_pump]：fail 释放的并发槽必须补位，否则 queued 永远不启动。
+  void rebindSession(BigInt oldId, BigInt newId) {
+    if (_disposed) return;
+    var changed = false;
+    for (final j in jobs) {
+      if (j.kind == SftpJobKind.tarDownload) {
+        continue; // 独立 spec 建连，不参与重绑
+      }
+      // canceled 任务 UI 仍允许重试，必须重绑；只有 done 不再使用会话。
+      if (j.state == SftpJobState.done) continue;
+      if (j.sessionFrom == oldId) {
+        j.sessionFrom = newId;
+        changed = true;
+      }
+      if (j.sessionTo == oldId) {
+        j.sessionTo = newId;
+        changed = true;
+      }
+    }
+    _rebindHolds.remove(oldId); // 无论是否有任务，窗口都结束
+    if (changed) _notify();
+    _pump();
+  }
+
   /// 清理已完成与已取消（保留失败，提示用户可重试）。
   void clearFinished() {
     if (_disposed) return;
@@ -270,7 +371,9 @@ class SftpTransferQueue extends ChangeNotifier {
   void _pump() {
     while (jobs.where((j) => j.state == SftpJobState.running).length <
         concurrency) {
-      final next = jobs.firstWhereOrNull((j) => j.state == SftpJobState.queued);
+      final next = jobs.firstWhereOrNull(
+        (j) => j.state == SftpJobState.queued && !_isHeld(j),
+      );
       if (next == null) return;
       _start(next);
     }

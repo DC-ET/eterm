@@ -442,6 +442,210 @@ void main() {
       q.dispose();
     });
 
+
+    test('会话重连：running 标 failed、queued 重绑新 id 后补位', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final newId = BigInt.from(200);
+      final a = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
+          name: 'a',
+          sessionTo: oldId);
+      final b = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
+          name: 'b',
+          sessionTo: oldId);
+      expect(a.state, SftpJobState.running);
+      expect(b.state, SftpJobState.queued);
+
+      q.failJobsForSession(oldId, reason: '会话已重连，请重试');
+      expect(a.state, SftpJobState.failed);
+      expect(a.error, contains('会话已重连'));
+      expect(t.cancels, contains(a.jobId), reason: '旧 writer 必须真正取消（P0-2）');
+      expect(
+        b.state,
+        SftpJobState.queued,
+        reason: 'fail 不得先补位：排队任务仍挂旧 session',
+      );
+      expect(t.started.length, 1, reason: '旧会话上不得再启动新任务');
+
+      q.rebindSession(oldId, newId);
+      expect(a.sessionTo, newId, reason: 'failed 任务也要重绑，重试才可用');
+      expect(b.sessionTo, newId);
+      expect(b.state, SftpJobState.running, reason: '重绑后必须补上空出的并发位');
+      expect(t.started.length, 2);
+
+      t.complete(b.jobId);
+      await pumpEventQueue();
+      q.retry(a);
+      expect(a.state, SftpJobState.running);
+      await pumpEventQueue();
+      expect(t.started.last.$2, 'r1');
+      q.dispose();
+    });
+
+    test('已取消任务重连后同样重绑，点重试不会拿死会话（P1-A）', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final newId = BigInt.from(200);
+      _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
+          name: 'a',
+          sessionTo: oldId);
+      final b = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
+          name: 'b',
+          sessionTo: oldId);
+      q.cancel(b); // 用户取消排队任务
+      expect(b.state, SftpJobState.canceled);
+
+      q.beginRebind(oldId);
+      q.failJobsForSession(oldId, reason: '会话已重连，请重试');
+      q.rebindSession(oldId, newId);
+      expect(b.sessionTo, newId, reason: 'canceled 也可重试，必须重绑');
+
+      q.retry(b);
+      expect(b.state, SftpJobState.running);
+      await pumpEventQueue();
+      expect(t.started.last.$2, 'r2', reason: '重试用新会话启动');
+      q.dispose();
+    });
+
+    test('重连窗口：旧流报错触发的 _pump 不得启动挂旧 id 的 queued（P0-1）', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final a = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
+          name: 'a',
+          sessionTo: oldId);
+      final b = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
+          name: 'b',
+          sessionTo: oldId);
+      expect(b.state, SftpJobState.queued);
+
+      // 模拟重连：旧会话断开 → running 流报错，onError 内部会 _pump。
+      q.beginRebind(oldId);
+      t.fail(a.jobId, 'ssh disconnected');
+      await pumpEventQueue();
+      expect(a.state, SftpJobState.failed);
+      expect(
+        b.state,
+        SftpJobState.queued,
+        reason: '重绑窗口内不得拿旧 session 启动排队任务',
+      );
+      expect(t.started.length, 1);
+
+      q.rebindSession(oldId, BigInt.from(200));
+      expect(b.sessionTo, BigInt.from(200));
+      expect(b.state, SftpJobState.running);
+      expect(t.started.length, 2);
+      q.dispose();
+    });
+
+    test('endRebind 放行 held 的 queued（列表恢复/探活成功路径）', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final a = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
+          name: 'a',
+          sessionTo: oldId);
+      final b = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
+          name: 'b',
+          sessionTo: oldId);
+      expect(b.state, SftpJobState.queued);
+
+      q.beginRebind(oldId);
+      t.complete(a.jobId); // running 结束空出槽位
+      await pumpEventQueue();
+      expect(b.state, SftpJobState.queued, reason: 'held 期间不得启动');
+
+      q.endRebind(oldId);
+      expect(b.state, SftpJobState.running, reason: '释放 hold 后必须补位');
+      q.dispose();
+    });
+
+    test('重连失败无新会话：includeQueued 把排队任务也停住', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final a = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l1',
+          pathTo: 'r1',
+          name: 'a',
+          sessionTo: oldId);
+      final b = _enq(q,
+          kind: SftpJobKind.upload,
+          pathFrom: 'l2',
+          pathTo: 'r2',
+          name: 'b',
+          sessionTo: oldId);
+      expect(b.state, SftpJobState.queued);
+
+      q.failJobsForSession(
+        oldId,
+        reason: '连接已断开，请重试',
+        includeQueued: true,
+      );
+      expect(a.state, SftpJobState.failed);
+      expect(b.state, SftpJobState.failed, reason: '不能留在 queued 等 _pump 拿死会话启动');
+      expect(t.started.length, 1);
+
+      q.rebindSession(oldId, BigInt.from(200));
+      expect(a.sessionTo, BigInt.from(200));
+      expect(b.sessionTo, BigInt.from(200), reason: '重连成功后重试要用新 id');
+      q.dispose();
+    });
+
+    test('重绑不影响 tarDownload 的独立 specFrom 建连', () async {
+      final t = FakeTransport();
+      final q = SftpTransferQueue(concurrency: 1, transport: t);
+      final oldId = BigInt.from(100);
+      final job = q.enqueue(
+        kind: SftpJobKind.tarDownload,
+        pathFrom: 'rdir',
+        pathTo: 'l.tar.gz',
+        name: 't',
+        sessionFrom: oldId,
+        specFrom: const SftpRemoteSpec(
+          host: 'h',
+          port: 22,
+          user: 'u',
+          authKind: 'password',
+          secret: 'p',
+        ),
+      )!;
+      q.failJobsForSession(oldId, reason: 'x');
+      q.rebindSession(oldId, BigInt.from(200));
+      expect(job.sessionFrom, oldId, reason: 'tar 独立建连，不得被重绑');
+      expect(job.state, SftpJobState.running, reason: 'tar 不受旧会话断开影响');
+      expect(t.cancels, isEmpty);
+      expect(job.specFrom?.host, 'h', reason: 'tar 仍按自己的 spec 建连');
+      q.dispose();
+    });
+
     test('dispose 后的取消/重试/清理为 no-op', () async {
       final t = FakeTransport();
       final q = _queue(t);

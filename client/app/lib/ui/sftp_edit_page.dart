@@ -29,7 +29,10 @@ class SftpEditPage extends StatefulWidget {
   });
 
   final String hostLabel;
-  final BigInt sessionId;
+
+  /// 动态会话 id：SFTP 标签保活期间可能断线重连换 session，编辑页不能钉死
+  /// 打开时的 id，否则重连后保存写到已关闭会话（方案 D11 / P2-8）。
+  final BigInt Function() sessionId;
   final String remotePath;
 
   @override
@@ -41,10 +44,14 @@ class _SftpEditPageState extends State<SftpEditPage> {
   String? _reason;
   final TextEditingController _ctrl = TextEditingController();
   bool _dirty = false;
+  bool _loading = false; // 防重入（双击重试）；不能拿 _phase==loading 当守卫——
+  // initState 首次调用时 phase 本来就是 loading，会把首次加载直接挡掉。
   int? _baseMtime; // 下载时的远端 mtime（保存前比对）
-  (int, int)? _prog; // 下载/回传进度（transferred, total）
+  (int, int)? _prog; // 下载/回传进度（transferred, total)
 
   String get _name => widget.remotePath.split('/').last;
+
+  BigInt get _sessionId => widget.sessionId();
 
   @override
   void initState() {
@@ -64,22 +71,21 @@ class _SftpEditPageState extends State<SftpEditPage> {
     final safe =
         widget.hostLabel.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final dir = Directory(
-        '${tmp.path}/eterm-sftp-edit/$safe-${widget.sessionId}');
+        '${tmp.path}/eterm-sftp-edit/$safe-$_sessionId');
     await dir.create(recursive: true);
     return '${dir.path}/$_name';
   }
 
   Future<void> _load() async {
-    if (_phase == _EditPhase.loading || _phase == _EditPhase.saving) {
-      return; // 防重入（双击重试会并发两个下载写同一暂存）
-    }
+    if (_loading || _phase == _EditPhase.saving) return; // 防重入（同一暂存）
+    _loading = true;
     setState(() {
       _phase = _EditPhase.loading;
       _reason = null;
       _prog = null;
     });
     try {
-      final id = widget.sessionId;
+      final id = _sessionId;
       final st = await sftp.sftpStat(id: id, path: widget.remotePath);
       if (st == null) throw ('远端文件不存在');
       if (st.size.toInt() > _kMaxEditBytes) throw ('文件超过 2MB，暂不支持编辑');
@@ -103,13 +109,18 @@ class _SftpEditPageState extends State<SftpEditPage> {
       final head = bytes.length > 8192 ? bytes.sublist(0, 8192) : bytes;
       if (head.contains(0)) throw ('二进制文件不支持文本编辑');
       final text = utf8.decode(bytes, allowMalformed: false);
-      if (!mounted) return;
+      if (!mounted) {
+        _loading = false;
+        return;
+      }
       setState(() {
         _ctrl.text = text;
         _dirty = false;
         _phase = _EditPhase.editing;
       });
+      _loading = false;
     } catch (e) {
+      _loading = false;
       if (!mounted) return;
       setState(() {
         _phase = _EditPhase.failed;
@@ -128,7 +139,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
     try {
       // 保存前校验远端是否被别人改过
       final st =
-          await sftp.sftpStat(id: widget.sessionId, path: widget.remotePath);
+          await sftp.sftpStat(id: _sessionId, path: widget.remotePath);
       if (st != null && _baseMtime != null && st.mtime != _baseMtime) {
         if (!mounted) return;
         final ok = await showDialog<bool>(
@@ -169,7 +180,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
       }
       final tmpPath = await _writeTemp();
       await for (final p in sftp.sftpUpload(
-        id: widget.sessionId,
+        id: _sessionId,
         jobId: freshSftpJobId(),
         localPath: tmpPath,
         remotePath: widget.remotePath,
@@ -184,7 +195,7 @@ class _SftpEditPageState extends State<SftpEditPage> {
       // 刷新 mtime 基线：否则下次保存必然误报"远端文件已变化"（自己刚改过）
       try {
         final st2 =
-            await sftp.sftpStat(id: widget.sessionId, path: widget.remotePath);
+            await sftp.sftpStat(id: _sessionId, path: widget.remotePath);
         _baseMtime = st2?.mtime;
       } catch (_) {
         _baseMtime = null; // stat 失败则跳过下次校验（宁可不弹不误弹）

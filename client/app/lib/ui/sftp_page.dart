@@ -20,20 +20,12 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../services/app_state.dart';
 import 'sftp_drag.dart';
 import 'sftp_edit_page.dart';
 import 'sftp_selection.dart';
 import 'theme.dart';
 import 'ui_utils.dart';
-
-/// 一侧的规格：host == null 表示本机工作区。
-class SftpSideSpec {
-  const SftpSideSpec({this.host, this.authKind, this.secret});
-  final HostView? host;
-  final String? authKind; // password | key
-  final String? secret;
-}
+import 'work_tabs.dart';
 
 enum _SidePhase { localPending, localReady, connecting, live, failed }
 
@@ -91,9 +83,17 @@ class _Side {
   String? reason; // 连接失败原因
 
   BigInt? sessionId;
+  /// 最近一次失效的会话 id：重连失败时 sessionId 被清空，队列仍挂着这个旧 id；
+  /// 下次重连成功要用它做 fail/rebind（否则任务永远指向死会话）。
+  BigInt? staleSessionId;
   String rpath = '/';
   List<sftp.SftpEntry>? rentries; // null = 列表加载中
   int listSeq = 0; // 在途列举序号：慢响应不得覆盖新目录的结果（导航/自动刷新并发）
+  int connectSeq = 0; // 连接/重连代次：迟到的连接结果不得覆盖新连接
+  bool probeSuspect = false; // 探活失败、尚未确认重连：status 显示 degraded
+  bool liveAtPause = false; // 退后台时是否 live（回前台只探活当时活着的侧）
+  bool probing = false; // 探活去重：聚焦/恢复可能连续触发
+  bool probeAutoReconnect = false; // degraded 后传输 settle 时：自动重连还是判死
 
   // 本地浏览（远端侧恒为 null；桌面初始 localPending 等待选目录）
   String? lpath;
@@ -106,17 +106,82 @@ class _Side {
   SftpSelection selection = SftpSelection.empty;
 }
 
-class SftpDualPage extends StatefulWidget {
+/// SFTP 双侧工作区。
+///
+/// 两种承载形态（方案 §4.2）：
+/// - [embedded] = true：作为 Shell 的标签内嵌，不自己搭 Scaffold/AppBar，
+///   顶部一条细工具条提供队列入口；隐藏时 State 仍存活（TickerMode 停动画）。
+/// - [embedded] = false：独立路由页（[SftpDualPage] 包装），保留原 AppBar/返回。
+class SftpWorkspace extends StatefulWidget {
+  const SftpWorkspace({
+    super.key,
+    required this.left,
+    required this.right,
+    this.embedded = true,
+    this.visible = true,
+    this.status,
+  });
+
+  final SftpSideSpec left;
+  final SftpSideSpec right;
+  final bool embedded;
+
+  /// 是否为当前可见标签：隐藏时业务照常跑，但 SnackBar 延后到切回可见
+  /// 再补发（方案 §4.8 / D17）。
+  final bool visible;
+
+  /// 标签状态（phase + 传输计数），Shell 的 pill 订阅它。
+  final ValueNotifier<WorkTabStatus>? status;
+
+  @override
+  State<SftpWorkspace> createState() => _SftpWorkspaceState();
+}
+
+/// 独立路由入口（仅兼容旧调用方，新代码请走 Shell.openSftp）。
+///
+/// 注意：路由形态也会注册到生命周期 registry（移动端回前台同样探活），
+/// 但新代码应走 `Shell.openSftp`，才能与终端共享标签栈/关闭确认/状态徽标。
+class SftpDualPage extends StatelessWidget {
   const SftpDualPage({super.key, required this.left, required this.right});
 
   final SftpSideSpec left;
   final SftpSideSpec right;
 
   @override
-  State<SftpDualPage> createState() => _SftpDualPageState();
+  Widget build(BuildContext context) =>
+      SftpWorkspace(left: left, right: right, embedded: false);
 }
 
-class _SftpDualPageState extends State<SftpDualPage> {
+/// 存活的 SFTP 工作区（含隐藏标签）：移动端回前台统一探活/重连（方案 §4.6）。
+final Set<_SftpWorkspaceState> _activeSftpWorkspaces = {};
+
+/// 进程回前台：只探活退后台时仍 live 的远端侧（D4）。
+void sftpWorkspacesOnAppPaused() {
+  for (final w in List.of(_activeSftpWorkspaces)) {
+    w._onAppPaused();
+  }
+}
+
+/// 进程回前台/桌面窗口重新聚焦：探活并重连失联侧（D4/D13）。
+void sftpWorkspacesOnAppResume() {
+  for (final w in List.of(_activeSftpWorkspaces)) {
+    w._onAppResume();
+  }
+}
+
+/// 桌面窗口聚焦：只探活当前可见的 SFTP 标签（非活动标签省 RTT，D16）。
+void sftpWorkspacesProbeVisible() {
+  for (final w in List.of(_activeSftpWorkspaces)) {
+    if (!w.mounted || !w.widget.visible) continue;
+    for (final s in w._sides) {
+      if (!s.isLocal && s.phase == _SidePhase.live) {
+        unawaited(w._probeOrReconnect(s, reconnect: false));
+      }
+    }
+  }
+}
+
+class _SftpWorkspaceState extends State<SftpWorkspace> {
   late final _Side _l = _Side(widget.left);
   late final _Side _r = _Side(widget.right);
   late final List<_Side> _sides = [_l, _r];
@@ -129,10 +194,12 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   bool _busy = false; // mkdir/rename/delete 等快速写操作
   int _activeSide = 0; // 手机布局：当前展示哪侧
+  String? _pendingSnack; // 隐藏期间的提示：切回可见时补发最后一条
 
   @override
   void initState() {
     super.initState();
+    _activeSftpWorkspaces.add(this);
     for (final s in _sides) {
       if (s.isLocal) {
         s.phase = _SidePhase.localPending;
@@ -142,16 +209,35 @@ class _SftpDualPageState extends State<SftpDualPage> {
       }
     }
     _queue.addListener(_onQueueChanged);
+    _publishStatus();
+  }
+
+  @override
+  void didUpdateWidget(covariant SftpWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.visible && !oldWidget.visible) {
+      final msg = _pendingSnack;
+      _pendingSnack = null;
+      if (msg != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.visible) _showSnack(msg);
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
+    _activeSftpWorkspaces.remove(this);
     _queue.removeListener(_onQueueChanged);
     unawaited(_queue.shutdown());
     _queue.dispose();
     for (final s in _sides) {
-      final id = s.sessionId;
-      if (id != null) {
+      final ids = <BigInt>{
+        if (s.sessionId != null) s.sessionId!,
+        if (s.staleSessionId != null) s.staleSessionId!,
+      };
+      for (final id in ids) {
         try {
           sftp.sftpDisconnect(id: id);
         } catch (_) {}
@@ -162,12 +248,41 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   // ---------- 连接与浏览 ----------
 
-  Future<void> _connect(_Side s) async {
+  Future<void> _connect(_Side s) => _connectSide(s, preservePath: false);
+
+  /// 建连/重连统一入口。
+  ///
+  /// [preservePath] = true 用于断线重连：保持当前远端目录，新会话上重新列举；
+  /// 原目录不存在/不可读时回落到主目录（方案 §4.6）。false 用于首次连接与
+  /// 用户点「重试」：沿用旧行为回到主目录。
+  ///
+  /// [connectSeq] 代次防串：并发重连/用户手动重试时，迟到的旧结果直接丢弃并
+  /// 关掉它建出来的会话，避免 UI 会话与状态错配。
+  Future<void> _connectSide(
+    _Side s, {
+    required bool preservePath,
+  }) async {
+    if (s.isLocal) return;
     final h = s.spec.host!;
+    final seq = ++s.connectSeq;
+    final oldId = s.sessionId;
+    if (oldId != null) s.staleSessionId = oldId;
+    // 断开旧会话前先挂起队列：旧流报错触发的 _pump 不得拿死 id 启动 queued。
+    final rebindId = s.staleSessionId;
+    if (rebindId != null) _queue.beginRebind(rebindId);
     setState(() {
       s.phase = _SidePhase.connecting;
       s.reason = null;
+      s.probeSuspect = false;
+      s.sessionId = null;
+      s.listSeq++; // 使在途列举失效，旧会话的列表不得落到新连接上
     });
+    _publishStatus();
+    if (oldId != null) {
+      try {
+        sftp.sftpDisconnect(id: oldId);
+      } catch (_) {}
+    }
     BigInt? id;
     try {
       id = await sftp.sftpConnect(
@@ -177,31 +292,74 @@ class _SftpDualPageState extends State<SftpDualPage> {
         authKind: s.spec.authKind!,
         secret: s.spec.secret!,
       );
+      if (!mounted || seq != s.connectSeq) {
+        try {
+          sftp.sftpDisconnect(id: id);
+        } catch (_) {}
+        return;
+      }
       final real = await sftp.sftpRealpath(id: id, path: '.');
-      if (!mounted) {
-        sftp.sftpDisconnect(id: id);
+      if (!mounted || seq != s.connectSeq) {
+        try {
+          sftp.sftpDisconnect(id: id);
+        } catch (_) {}
         return;
       }
       final liveId = id; // 闭包内空安全提升失效：先取局部非空副本
+      final stale = s.staleSessionId;
       setState(() {
         s.sessionId = liveId;
+        s.staleSessionId = null;
         s.phase = _SidePhase.live;
-        s.rpath = real.isEmpty ? '/' : real;
+        if (!preservePath) s.rpath = real.isEmpty ? '/' : real;
       });
-      await _list(s);
+      if (stale != null) {
+        // 会话 id 变了：旧任务无法续传（任务自带旧 id），显式失败提示重试；
+        // 队列内新任务随后自动落到新会话（D10）。
+        _queue.failJobsForSession(stale, reason: '会话已重连，请重试');
+        _queue.rebindSession(stale, liveId);
+      }
+      _publishStatus();
+      final ok = await _list(s);
+      if (!ok && preservePath && mounted && seq == s.connectSeq) {
+        final home = real.isEmpty ? '/' : real;
+        if (s.rpath != home) {
+          setState(() => s.rpath = home);
+          await _list(s);
+          _toast('原目录不可用，已回到主目录');
+        }
+      }
     } catch (e) {
-      if (id != null) sftp.sftpDisconnect(id: id);
-      if (!mounted) return;
+      if (id != null) {
+        try {
+          sftp.sftpDisconnect(id: id);
+        } catch (_) {}
+      }
+      if (!mounted || seq != s.connectSeq) return;
       setState(() {
         s.phase = _SidePhase.failed;
         s.reason = '$e';
+        s.rentries = [];
       });
+      // 重连失败：没有新会话可绑，旧会话上的排队任务必须停住（不能等 _pump
+      // 拿死 id 启动）；成功后 rebind 到新 id，用户再点重试即可续传。
+      final stale = s.staleSessionId;
+      if (stale != null) {
+        _queue.failJobsForSession(
+          stale,
+          reason: '连接已断开，请重试',
+          includeQueued: true,
+        );
+        _queue.endRebind(stale);
+      }
+      _publishStatus();
     }
   }
 
-  Future<void> _list(_Side s) async {
+  /// 列举远端目录。返回 false 表示本次列举失败（重连回退主目录要用）。
+  Future<bool> _list(_Side s) async {
     final id = s.sessionId;
-    if (id == null) return;
+    if (id == null) return false;
     final seq = ++s.listSeq;
     setState(() {
       s.selection = SftpSelection.empty; // 换目录/刷新：旧选中项已不在列表里
@@ -209,13 +367,158 @@ class _SftpDualPageState extends State<SftpDualPage> {
     });
     try {
       final items = await sftp.sftpList(id: id, path: s.rpath);
-      if (!mounted || seq != s.listSeq) return; // 已发起更新的列举
-      setState(() => s.rentries = items);
+      if (!mounted || seq != s.listSeq) return true; // 已发起更新的列举
+      final wasSuspect = s.probeSuspect;
+      setState(() {
+        s.rentries = items;
+        s.probeSuspect = false;
+      });
+      if (wasSuspect) {
+        // 列表成功是“会话确实活着”的最强证据：必须释放 degraded 期间的
+        // hold，否则该侧 queued 会被永久卡在排队（P1-B 复核新增）。
+        s.probeAutoReconnect = false;
+        _queue.endRebind(id);
+      }
+      _publishStatus();
+      return true;
     } catch (e) {
-      if (!mounted || seq != s.listSeq) return;
+      if (!mounted) return false;
+      // 被更新的列举取代：本次结果无意义，不能当失败触发回 home（P1-4）
+      if (seq != s.listSeq) return true;
       setState(() => s.rentries = []);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('读取目录失败: $e')));
+      _snack('读取目录失败: $e');
+      // 列举失败可能只是目录不存在，也可能是连接已死。异步探活一次：
+      // realpath 成功则保持 live，失败才把 phase 置 failed（方案 §4.6）。
+      unawaited(_probeAfterListError(s));
+      return false;
+    }
+  }
+
+  Future<void> _probeAfterListError(_Side s) async {
+    final id = s.sessionId;
+    if (id == null || s.isLocal) return;
+    try {
+      await sftp.sftpRealpath(
+        id: id,
+        path: '.',
+      ).timeout(const Duration(seconds: 6));
+    } catch (_) {
+      if (!mounted || s.sessionId != id) return;
+      // 大传输占满通道时 realpath 也可能超时：有 running 传输先只降级，
+      // 不拆会话/不杀任务（P1-3）；等传输结束后的探活再判死。
+      if (_queue.hasRunningForSession(id)) {
+        // 通道可能只是忙：先降级并 hold 住 queued；running settle 后
+        // _onQueueChanged 会再探一次，成功放行、失败再判死。
+        _queue.beginRebind(id);
+        s.probeAutoReconnect = false;
+        setState(() => s.probeSuspect = true);
+        _publishStatus();
+        return;
+      }
+      // 确认已死：断开并清 sessionId 防 UI 继续展示"可传"，旧 id 留给队列重绑。
+      s.staleSessionId = id;
+      _queue.beginRebind(id);
+      try {
+        sftp.sftpDisconnect(id: id);
+      } catch (_) {}
+      setState(() {
+        s.phase = _SidePhase.failed;
+        s.reason = '连接已断开';
+        s.sessionId = null;
+        s.rentries = [];
+        s.probeSuspect = false;
+      });
+      _queue.failJobsForSession(
+        id,
+        reason: '连接已断开，请重试',
+        includeQueued: true,
+      );
+      _queue.endRebind(id);
+      _publishStatus();
+    }
+  }
+
+  // ---------- 生命周期探活（移动端回前台 / 桌面窗口聚焦） ----------
+
+  void _onAppPaused() {
+    for (final s in _sides) {
+      s.liveAtPause = !s.isLocal && s.phase == _SidePhase.live;
+    }
+  }
+
+  void _onAppResume() {
+    for (final s in _sides) {
+      if (!s.isLocal && s.liveAtPause && s.phase == _SidePhase.live) {
+        s.liveAtPause = false;
+        unawaited(_probeOrReconnect(s, reconnect: true));
+      }
+    }
+  }
+
+  /// 带 6s 超时的探活：真实 socket 操作，进程挂起后冻结的连接会卡住。
+  ///
+  /// [reconnect] = true（移动端回前台）：确认失联且该会话没有 running 传输时
+  /// 自动重连并保留目录；有 running 传输只标 degraded，避免把“通道忙”误判成
+  /// 断线（P1-2）。false（桌面窗口聚焦，D16）：只探活，失败标 failed 交给用户
+  /// 点重试，不自动新建连接。
+  Future<void> _probeOrReconnect(
+    _Side s, {
+    required bool reconnect,
+  }) async {
+    final id = s.sessionId;
+    if (id == null || s.probing) return;
+    s.probing = true;
+    try {
+      await sftp.sftpRealpath(
+        id: id,
+        path: '.',
+      ).timeout(const Duration(seconds: 6));
+      if (!mounted || s.sessionId != id) return;
+      if (s.probeSuspect) {
+        setState(() => s.probeSuspect = false);
+        s.probeAutoReconnect = false;
+        _queue.endRebind(id); // 探活恢复：放行 degraded 期间 hold 的 queued
+        _publishStatus();
+      }
+    } catch (_) {
+      if (!mounted || s.sessionId != id) return;
+      if (_queue.hasRunningForSession(id)) {
+        // 传输在跑：探活超时可能只是通道忙，保留会话，仅显示 degraded。
+        // hold queued，等 running settle 后由 _onQueueChanged 再探（P1-B）。
+        _queue.beginRebind(id);
+        s.probeAutoReconnect = reconnect;
+        setState(() => s.probeSuspect = true);
+        _publishStatus();
+        return;
+      }
+      if (reconnect) {
+        setState(() => s.probeSuspect = true);
+        _publishStatus();
+        await _connectSide(s, preservePath: true);
+      } else {
+        // 桌面聚焦：判死但不自动重连（用户点重试）。与重连路径同口径清理。
+        s.staleSessionId = id;
+        _queue.beginRebind(id);
+        try {
+          sftp.sftpDisconnect(id: id);
+        } catch (_) {}
+        setState(() {
+          s.phase = _SidePhase.failed;
+          s.reason = '连接已断开';
+          s.sessionId = null;
+          s.rentries = [];
+          s.probeSuspect = false;
+        });
+        _queue.failJobsForSession(
+          id,
+          reason: '连接已断开，请重试',
+          includeQueued: true,
+        );
+        _queue.endRebind(id);
+        _publishStatus();
+      }
+    } finally {
+      s.probing = false;
     }
   }
 
@@ -383,13 +686,11 @@ class _SftpDualPageState extends State<SftpDualPage> {
           s.phase = _SidePhase.localPending;
           s.localHint = '无法访问该目录（权限不足），请重新选择';
         });
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('目录需要重新授权')));
+        _snack('目录需要重新授权');
         return;
       }
       setState(() => s.lentries = []);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('读取本地目录失败: $e')));
+      _snack('读取本地目录失败: $e');
     }
   }
 
@@ -844,6 +1145,16 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   /// 队列状态变化：任务完成 → 若目标侧正浏览目标目录则刷新（任务清单 #9）。
   void _onQueueChanged() {
+    _publishStatus();
+    // 探活降级时队列被 hold；running 传输 settle（完成/失败）后必须再探一次：
+    // 成功则 endRebind 放行 queued，失败则重连或判死（避免 queued 泵到死会话）。
+    for (final s in _sides) {
+      final id = s.sessionId;
+      if (s.isLocal || id == null || !s.probeSuspect) continue;
+      if (s.phase != _SidePhase.live) continue;
+      if (_queue.hasRunningForSession(id)) continue;
+      unawaited(_probeOrReconnect(s, reconnect: s.probeAutoReconnect));
+    }
     if (_autoRefresh.isEmpty) return;
     final settled = <SftpTransferJob>[];
     for (final e in _autoRefresh.entries) {
@@ -1118,7 +1429,14 @@ class _SftpDualPageState extends State<SftpDualPage> {
       MaterialPageRoute(
         builder: (_) => SftpEditPage(
           hostLabel: s.spec.host!.label,
-          sessionId: id,
+          // 动态取当前会话：保活标签重连后 sessionId 已换，钉死旧 id 会写失败
+          sessionId: () {
+            final current = s.sessionId;
+            if (current == null) {
+              throw StateError('连接已断开，内容仍在编辑框，可复制后重试');
+            }
+            return current;
+          },
           remotePath: _joinRemote(s, e.name),
         ),
       ),
@@ -1390,13 +1708,62 @@ class _SftpDualPageState extends State<SftpDualPage> {
   void _err(String msg) {
     if (!mounted) return;
     setState(() => _busy = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    _snack(msg);
   }
 
   /// 仅提示，不碰 _busy（_err 会解除写互斥，非错误提示不该顺带解除）。
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    _snack(msg);
+  }
+
+  /// 统一提示出口（方案 §4.8）：隐藏标签不弹全局 SnackBar（避免多标签串台），
+  /// 但记下最后一条，切回可见时补发，避免后台失败完全无提示。
+  void _snack(String msg) {
+    if (!mounted) return;
+    if (!widget.visible) {
+      _pendingSnack = msg;
+      return;
+    }
+    _showSnack(msg);
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
+  }
+
+  /// 发布标签状态：phase 为远端侧聚合，传输计数来自队列。
+  /// 只在值变化时写 notifier，避免 Tab 栏频繁重建。
+  void _publishStatus() {
+    final n = widget.status;
+    if (n == null) return;
+    final remote = _sides.where((s) => !s.isLocal).toList();
+    final live = remote.where((s) => s.phase == _SidePhase.live).length;
+    final failed = remote.where((s) => s.phase == _SidePhase.failed).length;
+    var phase = aggregateSftpPhase(
+      total: remote.length,
+      live: live,
+      failed: failed,
+    );
+    if (phase != WorkTabPhase.closed &&
+        remote.any((s) => s.probeSuspect)) {
+      phase = WorkTabPhase.degraded;
+    }
+    var active = 0;
+    var failedJobs = 0;
+    for (final j in _queue.jobs) {
+      if (j.state == SftpJobState.failed) failedJobs++;
+      if (!j.isTerminal) active++;
+    }
+    final next = WorkTabStatus(
+      phase: phase,
+      activeTransfers: active,
+      failedTransfers: failedJobs,
+    );
+    if (n.value != next) n.value = next;
   }
 
   Future<String?> _promptText(String title, String label, {String? initial}) {
@@ -1525,40 +1892,46 @@ class _SftpDualPageState extends State<SftpDualPage> {
   Widget build(BuildContext context) {
     Theme.of(context); // 主题切换时随 inherited 重建
     final compact = MediaQuery.sizeOf(context).width < 720;
-    final macGap = !compact && Platform.isMacOS;
-    final title = '${_l.label} ⇄ ${_r.label}';
+    if (widget.embedded) {
+      // 嵌入 Shell 标签：不搭 Scaffold/AppBar（外层 Shell 已有），顶部只留
+      // 一条细工具条承载传输队列入口与进度；SafeArea 避开手机状态栏。
+      return ColoredBox(
+        color: Et.contentBg,
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          child: Column(
+            children: [
+              _queueProgressLine(),
+              // 手机纵向空间紧：队列入口并入 SegmentedButton 行的右侧
+              if (!compact) _embeddedToolbar(),
+              Expanded(child: _body(compact)),
+            ],
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: Et.contentBg,
-      appBar: AppBar(
-        // macOS 隐藏标题栏窗口：默认 leading 会压在交通灯下，
-        // 左移让位（+48 保证 BackButton 完整命中区，复审可选项 1）
-        leadingWidth: macGap ? kMacTitleBarInset + 48 : null,
-        leading: macGap
-            ? const Padding(
-                padding: EdgeInsets.only(left: kMacTitleBarInset),
-                child: BackButton(),
-              )
-            : null,
-        backgroundColor: Et.card,
-        surfaceTintColor: Et.card,
-        elevation: 0.5,
-        foregroundColor: Et.textPrimary,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 16.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            Text(
-              compact
-                  ? _sideSubtitle(_activeSide == 0 ? _l : _r)
-                  // Menlo 无 ⇄ 字形会回退成 #（复审可选项 3），分隔符用 ·；
-                  // 方向语义由上方标题的 ⇄ 承载
-                  : '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}',
+      appBar: _appBar(compact),
+      body: _body(compact),
+    );
+  }
+
+  Widget _embeddedToolbar() {
+    final subtitle = '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}';
+    return Container(
+      height: 38,
+      decoration: BoxDecoration(
+        color: Et.card,
+        border: Border(bottom: BorderSide(color: Et.cardBorder)),
+      ),
+      padding: const EdgeInsets.only(left: 12, right: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -1567,107 +1940,169 @@ class _SftpDualPageState extends State<SftpDualPage> {
                 color: Et.textSecondary,
               ),
             ),
-          ],
-        ),
-        actions: [
-          ListenableBuilder(
-            listenable: _queue,
-            builder: (context, _) {
-              final n = _queue.activeCount;
-              return IconButton(
-                onPressed: _openQueue,
-                tooltip: '传输队列',
-                icon: Badge(
-                  isLabelVisible: n > 0,
-                  label: Text('$n'),
-                  backgroundColor: Et.accent,
-                  child: const Icon(Icons.swap_vert, size: 21),
-                ),
-              );
-            },
           ),
-          const SizedBox(width: 4),
+          _queueButton(),
+          const SizedBox(width: 2),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(3),
-          child: ListenableBuilder(
-            listenable: _queue,
-            builder: (context, _) {
-              SftpTransferJob? job;
-              for (final j in _queue.jobs) {
-                if (j.state == SftpJobState.running) {
-                  job = j;
-                  break;
-                }
-              }
-              if (job == null) return const SizedBox(height: 3);
-              final total = job.total;
-              return LinearProgressIndicator(
-                value: total > 0 ? job.transferred / total : null,
-                minHeight: 3,
-                color: Et.accent,
-                backgroundColor: Et.cardBorder,
-              );
-            },
-          ),
-        ),
       ),
-      body: compact
-          ? Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
-                  child: SegmentedButton<int>(
-                    segments: [
-                      ButtonSegment(
-                        value: 0,
-                        icon: Icon(
-                          _l.isLocal ? Icons.phone_android : Icons.dns_outlined,
-                          size: 17,
-                        ),
-                        label: Text(_l.label),
-                      ),
-                      ButtonSegment(
-                        value: 1,
-                        icon: Icon(
-                          _r.isLocal ? Icons.phone_android : Icons.dns_outlined,
-                          size: 17,
-                        ),
-                        label: Text(_r.label),
-                      ),
-                    ],
-                    selected: {_activeSide},
-                    onSelectionChanged: (s) =>
-                        setState(() => _activeSide = s.first),
-                  ),
-                ),
-                Expanded(
-                  child: _sideBody(
-                    _activeSide == 0 ? _l : _r,
-                    compact: true,
-                  ),
-                ),
-              ],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: _dropPanel(
-                    _l,
-                    child: _sideBody(_l, compact: false),
-                  ),
-                ),
-                VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
-                Expanded(
-                  child: _dropPanel(
-                    _r,
-                    child: _sideBody(_r, compact: false),
-                  ),
-                ),
-              ],
-            ),
     );
+  }
+
+  AppBar _appBar(bool compact) {
+    final macGap = !compact && Platform.isMacOS;
+    final title = '${_l.label} ⇄ ${_r.label}';
+    return AppBar(
+      // macOS 隐藏标题栏窗口：默认 leading 会压在交通灯下，
+      // 左移让位（+48 保证 BackButton 完整命中区，复审可选项 1）
+      leadingWidth: macGap ? kMacTitleBarInset + 48 : null,
+      leading: macGap
+          ? const Padding(
+              padding: EdgeInsets.only(left: kMacTitleBarInset),
+              child: BackButton(),
+            )
+          : null,
+      backgroundColor: Et.card,
+      surfaceTintColor: Et.card,
+      elevation: 0.5,
+      foregroundColor: Et.textPrimary,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            compact
+                ? _sideSubtitle(_activeSide == 0 ? _l : _r)
+                // Menlo 无 ⇄ 字形会回退成 #（复审可选项 3），分隔符用 ·；
+                // 方向语义由上方标题的 ⇄ 承载
+                : '${_sideSubtitle(_l)}  ·  ${_sideSubtitle(_r)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontFamily: 'Menlo',
+              color: Et.textSecondary,
+            ),
+          ),
+        ],
+      ),
+      actions: [_queueButton(), const SizedBox(width: 4)],
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(3),
+        child: _queueProgressLine(),
+      ),
+    );
+  }
+
+  Widget _queueButton() {
+    return ListenableBuilder(
+      listenable: _queue,
+      builder: (context, _) {
+        final n = _queue.activeCount;
+        return IconButton(
+          onPressed: _openQueue,
+          tooltip: '传输队列',
+          visualDensity: VisualDensity.compact,
+          icon: Badge(
+            isLabelVisible: n > 0,
+            label: Text('$n'),
+            backgroundColor: Et.accent,
+            child: const Icon(Icons.swap_vert, size: 21),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _queueProgressLine() {
+    return SizedBox(
+      height: 3,
+      child: ListenableBuilder(
+        listenable: _queue,
+        builder: (context, _) {
+          SftpTransferJob? job;
+          for (final j in _queue.jobs) {
+            if (j.state == SftpJobState.running) {
+              job = j;
+              break;
+            }
+          }
+          if (job == null) return const SizedBox(height: 3);
+          final total = job.total;
+          return LinearProgressIndicator(
+            value: total > 0 ? job.transferred / total : null,
+            minHeight: 3,
+            color: Et.accent,
+            backgroundColor: Et.cardBorder,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _body(bool compact) {
+    return compact
+        ? Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 4, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SegmentedButton<int>(
+                        segments: [
+                          ButtonSegment(
+                            value: 0,
+                            icon: Icon(
+                              _l.isLocal
+                                  ? Icons.phone_android
+                                  : Icons.dns_outlined,
+                              size: 17,
+                            ),
+                            label: Text(_l.label),
+                          ),
+                          ButtonSegment(
+                            value: 1,
+                            icon: Icon(
+                              _r.isLocal
+                                  ? Icons.phone_android
+                                  : Icons.dns_outlined,
+                              size: 17,
+                            ),
+                            label: Text(_r.label),
+                          ),
+                        ],
+                        selected: {_activeSide},
+                        onSelectionChanged: (s) =>
+                            setState(() => _activeSide = s.first),
+                      ),
+                    ),
+                    if (widget.embedded) _queueButton(),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: _sideBody(_activeSide == 0 ? _l : _r, compact: true),
+              ),
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: _dropPanel(_l, child: _sideBody(_l, compact: false)),
+              ),
+              VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
+              Expanded(
+                child: _dropPanel(_r, child: _sideBody(_r, compact: false)),
+              ),
+            ],
+          );
   }
 
   String _sideSubtitle(_Side s) => s.isLocal

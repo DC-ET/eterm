@@ -64,6 +64,8 @@ client\app\scripts\release_windows.ps1        # -NoUpload 本地演练；上传�
 - **frb sync 函数跑在 UI 线程**：任何可能阻塞（钥匙串、网络）的 Rust 调用必须 async；russh 需要 `static RUNTIME: OnceLock<Runtime>`（`frb::spawn` 无 tokio reactor）。
 - **SafeArea 层级**：桌面标题栏 = `Container(深色) > SafeArea > 内容行`（背景延伸到状态栏）；手机（<720 宽）无深色标题栏，浅色 app bar 顶到状态栏下，终端页自带深色状态栏区 + AnnotatedRegion 切图标色。
 - 响应式断点：`MediaQuery.width < 720` = 手机布局（底部导航 + 单列列表卡 + FAB），桌面 = 侧栏 + 网格。改终端标签结构时注意：IndexedStack 子树类型随 compact 变化会导致 State 重建 → SSH 断连（已知 P1，结构待改）。
+- **IndexedStack 标签 State 身份**：IndexedStack 会把 child 包进无 key 的 offstage 容器、按**位置**匹配元素；标签内容必须用 `GlobalKey`，否则关闭中间/左侧标签会让右侧所有标签 State 重建（终端重连；SFTP 丢目录/选区/传输队列）。SFTP 已改为与终端同栈的保活工作区标签（`WorkTab` + `SftpWorkspace`），改标签结构时先读 `docs/plan/eterm-SFTP工作区标签技术方案.md` §2.1.1。
+
 - **SPM 已全局关闭**（`flutter config --no-enable-swift-package-manager`，3.50 默认开但生成器丢插件）；图标经 `flutter_launcher_icons`（`dart run flutter_launcher_icons`）生成，源图在 `client/app/assets/icon/`。
 - macOS 自带 bash 3.2：shell 脚本里紧邻非 ASCII 字符的变量必须 `${}` 花括号。
 - Android release 必须含 INTERNET 权限（main AndroidManifest）——曾被删导致真机 DNS 失败。

@@ -4,8 +4,8 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../services/app_state.dart';
-import 'sftp_page.dart';
 import 'theme.dart';
+import 'work_tabs.dart';
 
 /// 弹层哨兵：区分"明确选择本机"与"取消关闭"（取消为 null 不落盘）。
 class _LocalPick {
@@ -13,9 +13,17 @@ class _LocalPick {
 }
 
 class SftpEntryPage extends StatefulWidget {
-  const SftpEntryPage({super.key, required this.app});
+  const SftpEntryPage({
+    super.key,
+    required this.app,
+    required this.onOpen,
+  });
 
   final AppState app;
+
+  /// 打开一对端点：Shell 建 SFTP 工作区标签（不再 push 独立路由，
+  /// 否则切回终端必须 pop、SFTP 连接随之销毁）。
+  final void Function(SftpSideSpec left, SftpSideSpec right) onOpen;
 
   @override
   State<SftpEntryPage> createState() => _SftpEntryPageState();
@@ -374,14 +382,16 @@ class _SftpEntryPageState extends State<SftpEntryPage> {
   }
 
   void _start() {
+    if (_bothLocal) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('两侧不能都是本机，请至少选择一台服务器')),
+      );
+      return;
+    }
     final leftSpec = _specFor(_left);
     final rightSpec = _specFor(_right);
     if (leftSpec == null || rightSpec == null) return; // 无凭据已被入口拦截
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SftpDualPage(left: leftSpec, right: rightSpec),
-      ),
-    );
+    widget.onOpen(leftSpec, rightSpec);
   }
 
   SftpSideSpec? _specFor(HostView? h) {
