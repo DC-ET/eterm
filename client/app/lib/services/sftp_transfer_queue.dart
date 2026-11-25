@@ -312,16 +312,24 @@ class SftpTransferQueue extends ChangeNotifier {
   }
 }
 
-/// 目标名冲突时的自动改名：a.txt → a (1).txt；序号顺延避开 taken 中的所有名字。
-/// 隐藏文件（".name"）整体视作无扩展名处理。
-String nextAvailableName(Iterable<String> taken, String name) {
-  final dot = name.lastIndexOf('.');
-  final base = dot <= 0 ? name : name.substring(0, dot);
-  final ext = dot <= 0 ? '' : name.substring(dot);
+/// 为 [desired] 取第一个可用名字（传输冲突自动改名用）。
+/// 可用 = 不在 [taken] 中且 [exists] 探活为 false（本机目标要查文件系统，
+/// 远端目标只查 taken）。desired 本身可用时原样返回。
+/// 命名规则：a.txt → a (1).txt；隐藏文件（".name"）整体视作无扩展名处理。
+String allocateUniqueName(
+  String desired, {
+  required Set<String> taken,
+  bool Function(String name)? exists,
+}) {
+  bool free(String n) => !taken.contains(n) && !(exists?.call(n) ?? false);
+  if (free(desired)) return desired;
+  final dot = desired.lastIndexOf('.');
+  final base = dot <= 0 ? desired : desired.substring(0, dot);
+  final ext = dot <= 0 ? '' : desired.substring(dot);
   var i = 1;
   while (true) {
     final cand = '$base ($i)$ext';
-    if (!taken.contains(cand)) return cand;
+    if (free(cand)) return cand;
     i++;
   }
 }

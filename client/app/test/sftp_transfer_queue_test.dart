@@ -74,17 +74,26 @@ SftpTransferJob _enq(
     )!;
 
 void main() {
-  group('nextAvailableName', () {
-    test('基础改名与序号顺延（仅在调用方已判定同名冲突后使用）', () {
-      expect(nextAvailableName(['a.txt'], 'a.txt'), 'a (1).txt');
-      expect(nextAvailableName(['a.txt', 'a (1).txt'], 'a.txt'), 'a (2).txt');
-      expect(nextAvailableName([], 'b.txt'), 'b (1).txt');
+  group('allocateUniqueName', () {
+    test('可用名原样返回（批量改名只处理冲突项）', () {
+      expect(allocateUniqueName('a.txt', taken: {}), 'a.txt');
+      expect(allocateUniqueName('a.txt', taken: {'b.txt'}), 'a.txt');
     });
 
-    test('无扩展名与隐藏文件', () {
-      expect(nextAvailableName(['README'], 'README'), 'README (1)');
-      expect(nextAvailableName(['.hidden'], '.hidden'), '.hidden (1)');
-      expect(nextAvailableName(['a.b.c'], 'a.b.c'), 'a.b (1).c');
+    test('与 taken 冲突时按序号顺延', () {
+      expect(allocateUniqueName('a.txt', taken: {'a.txt'}), 'a (1).txt');
+      expect(
+        allocateUniqueName('a.txt', taken: {'a.txt', 'a (1).txt'}),
+        'a (2).txt',
+      );
+    });
+
+    test('exists 探活参与判定（本机目标查文件系统）', () {
+      final onDisk = {'a.txt', 'a (1).txt'};
+      expect(
+        allocateUniqueName('a.txt', taken: {}, exists: onDisk.contains),
+        'a (2).txt',
+      );
     });
   });
 

@@ -1,6 +1,8 @@
 // SFTP 双侧文件管理页 v2（任务清单 #6/#7/#8/#9）：
 // - 两侧各自为「远端会话」或「本机工作区」，任选两台服务器互传，不再限制一边是本地
 // - 桌面双栏：按住文件拖到对侧面板，松手传到对侧当前目录（与 ⋮ 菜单同一条 _transfer）
+// - 多选：桌面单击替换 / ⌘(Ctrl) 单击切换 / Shift 连选；手机轻点切换。
+//   多选后拖任意选中行 = 整个选区一起传；右键菜单（手机长按）批量下载/上传/删除
 // - 远端目录 → 本地：exec tar -czf - 打包压缩流式下载（<名>.tar.gz）
 // - 远端目录 → 远端：递归逐文件复制（目标同大小跳过，重试可续）
 // - 远端文件 → 远端：分块经客户端内存直传（B 侧 .eterm-part 暂存 + 改名）
@@ -14,12 +16,14 @@ import 'package:eterm/services/sftp_transfer_queue.dart';
 import 'package:eterm/src/rust/api/local.dart' as local;
 import 'package:eterm/src/rust/api/sftp.dart' as sftp;
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/app_state.dart';
 import 'sftp_drag.dart';
 import 'sftp_edit_page.dart';
+import 'sftp_selection.dart';
 import 'theme.dart';
 import 'ui_utils.dart';
 
@@ -63,6 +67,18 @@ class _LocalEntry {
   final int mtime;
 }
 
+/// 选中条目（远端/本机二选一）：批量传输与删除的统一入参。
+class _SelEntry {
+  const _SelEntry.remote(this.remote) : local = null;
+  const _SelEntry.local(this.local) : remote = null;
+
+  final sftp.SftpEntry? remote;
+  final _LocalEntry? local;
+
+  String get name => remote?.name ?? local!.name;
+  bool get isDir => remote?.isDir ?? local!.isDir;
+}
+
 /// 一侧的运行状态。
 class _Side {
   _Side(this.spec);
@@ -86,8 +102,8 @@ class _Side {
   List<_LocalEntry>? lentries;
   int localListSeq = 0;
   String? localHint; // localPending 时的补充说明（如授权失效需重选）
-  // 当前选中条目名（按目录内唯一命名；换目录/刷新即清空，见各导航函数）
-  String? selected;
+  // 当前选区（按目录内唯一命名；换目录/刷新即清空，见各导航函数）
+  SftpSelection selection = SftpSelection.empty;
 }
 
 class SftpDualPage extends StatefulWidget {
@@ -188,7 +204,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     if (id == null) return;
     final seq = ++s.listSeq;
     setState(() {
-      s.selected = null; // 换目录/刷新：旧选中项已不在列表里
+      s.selection = SftpSelection.empty; // 换目录/刷新：旧选中项已不在列表里
       s.rentries = null;
     });
     try {
@@ -208,7 +224,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
 
   void _enterRemote(_Side s, sftp.SftpEntry e) {
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.rpath = _joinRemote(s, e.name);
     });
     _list(s);
@@ -218,7 +234,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     if (s.rpath == '/' || s.rpath.isEmpty) return;
     final idx = s.rpath.lastIndexOf('/');
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.rpath = idx <= 0 ? '/' : s.rpath.substring(0, idx);
     });
     _list(s);
@@ -319,7 +335,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
       } catch (_) {}
       setState(() {
         s.localHint = null;
-        s.selected = null;
+        s.selection = SftpSelection.empty;
         s.lroot = dir;
         s.lpath = dir;
         s.lentries = null;
@@ -336,7 +352,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     if (dir == null) return;
     final seq = ++s.localListSeq;
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.lentries = null;
     });
     try {
@@ -394,7 +410,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final p = _joinLocal(s, e.name);
     if (p == null) return;
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.lpath = p;
       s.lentries = null;
     });
@@ -410,7 +426,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final parent = idx <= 0 ? '/' : dir.substring(0, idx);
     if (parent == dir) return;
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.lpath = parent;
       s.lentries = null;
     });
@@ -422,7 +438,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final target = path.isEmpty ? '/' : path;
     if (target == s.rpath) return;
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.rpath = target;
     });
     _list(s);
@@ -436,7 +452,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     if (target != root && !target.startsWith('$root/')) target = root;
     if (target == s.lpath) return;
     setState(() {
-      s.selected = null;
+      s.selection = SftpSelection.empty;
       s.lpath = target;
       s.lentries = null;
     });
@@ -470,9 +486,6 @@ class _SftpDualPageState extends State<SftpDualPage> {
     return i <= 0 ? '/' : '/${crumbs.sublist(1, i + 1).join('/')}';
   }
 
-  Set<String> _localNames(_Side s) =>
-      (s.lentries ?? const []).map((e) => e.name).toSet();
-
   // ---------- 传输（任务清单 #7/#8） ----------
 
   _Side _otherOf(_Side s) => identical(s, _l) ? _r : _l;
@@ -480,6 +493,8 @@ class _SftpDualPageState extends State<SftpDualPage> {
   int _indexOf(_Side s) => identical(s, _l) ? 0 : 1;
 
   /// 文件行可拖时包一层识别器。不可拖（手机单栏、对侧还不能收、本机目录）原样返回。
+  /// 载荷记锚点行 + 条目快照；松手时由 [_dragEntries] 解析整选区，
+  /// 源侧列表恰好在拖拽期间刷新（选区被清）时退回快照，避免静默丢拖。
   Widget _maybeDrag({
     required bool enabled,
     required _Side src,
@@ -491,17 +506,30 @@ class _SftpDualPageState extends State<SftpDualPage> {
   }) {
     final row = buildRow();
     if (!enabled) return row;
+    // 多选时拖任意选中行 = 整选区；拖未选中行 = 只拖该行（与松手解析同口径）。
+    // 本机目录不支持上传，计数只算文件，免反馈芯片报大数。
+    var dragCount = 1;
+    if (src.selection.contains(name)) {
+      if (src.isLocal) {
+        final names = src.selection.names;
+        dragCount = (src.lentries ?? const <_LocalEntry>[])
+            .where((e) => names.contains(e.name) && !e.isDir)
+            .length;
+        if (dragCount < 1) dragCount = 1;
+      } else {
+        dragCount = src.selection.length;
+      }
+    }
     return MouseRegion(
       cursor: SystemMouseCursors.grab,
       child: SftpPanelDraggable<_SftpDrag>(
         data: _SftpDrag(
           sideIndex: _indexOf(src),
-          name: name,
-          isDir: isDir,
+          anchorName: name,
           remote: remote,
           local: local,
         ),
-        feedback: _DragChip(name: name, isDir: isDir),
+        feedback: _DragChip(name: name, isDir: isDir, count: dragCount),
         childWhenDragging: Opacity(opacity: 0.38, child: buildRow()),
         child: row,
       ),
@@ -514,13 +542,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
     return DragTarget<_SftpDrag>(
       onWillAcceptWithDetails: (d) => d.data.sideIndex != index,
       onAcceptWithDetails: (d) {
-        unawaited(
-          _transfer(
-            _sides[d.data.sideIndex],
-            re: d.data.remote,
-            le: d.data.local,
-          ),
-        );
+        // 多选：锚点在选区内则传整个选区，否则只传锚点行
+        final src = _sides[d.data.sideIndex];
+        unawaited(_transferBatch(src, _dragEntries(src, d.data)));
       },
       builder: (context, candidate, _) {
         final hot = candidate.isNotEmpty;
@@ -538,41 +562,86 @@ class _SftpDualPageState extends State<SftpDualPage> {
     );
   }
 
-  /// 从 src 侧把条目传到对侧。按两侧类型分派：
+  /// 从 src 侧把单条传到对侧（行 ⋮ 菜单入口，批量逻辑的薄包装）。
+  Future<void> _transfer(_Side src, {sftp.SftpEntry? re, _LocalEntry? le}) =>
+      _transferBatch(src, [
+        if (re != null) _SelEntry.remote(re) else _SelEntry.local(le!),
+      ]);
+
+  /// 对侧当前能否接收（本机恒可；远端需已连接且不是同一会话；双本机无意义）。
+  bool _canTransfer(_Side src) {
+    final dst = _otherOf(src);
+    if (src.isLocal && dst.isLocal) return false;
+    return dst.isLocal ||
+        (dst.sessionId != null && dst.sessionId != src.sessionId);
+  }
+
+  /// 选区（按当前列表顺序解析，批量入队顺序与界面一致）。
+  List<_SelEntry> _selectedEntries(_Side s) =>
+      _entriesNamed(s, s.selection.names);
+
+  List<_SelEntry> _entriesNamed(_Side s, Set<String> names) {
+    if (names.isEmpty) return const [];
+    if (s.isLocal) {
+      return [
+        for (final e in s.lentries ?? const <_LocalEntry>[])
+          if (names.contains(e.name)) _SelEntry.local(e),
+      ];
+    }
+    return [
+      for (final e in _sortedRemote(s.rentries ?? const <sftp.SftpEntry>[]))
+        if (names.contains(e.name)) _SelEntry.remote(e),
+    ];
+  }
+
+  /// 起拖锚点 → 实际传输条目：锚点在选区内则整选区，否则只拖锚点行。
+  /// 源侧列表在拖拽期间被刷新（选区已清、列表加载中）时退回载荷快照，
+  /// 与旧实现一致：绝不静默丢拖。
+  List<_SelEntry> _dragEntries(_Side src, _SftpDrag drag) {
+    final names = src.selection.dragNames(drag.anchorName, _orderedNames(src));
+    final entries = _entriesNamed(src, names.toSet());
+    if (entries.isNotEmpty) return entries;
+    if (drag.remote != null) return [_SelEntry.remote(drag.remote!)];
+    if (drag.local != null) return [_SelEntry.local(drag.local!)];
+    return const [];
+  }
+
+  /// 界面展示顺序（远端：目录在前、名称不区分大小写；本机列表已在 _lsLocal 排好）。
+  List<String> _orderedNames(_Side s) => s.isLocal
+      ? [for (final e in s.lentries ?? const <_LocalEntry>[]) e.name]
+      : [for (final e in _sortedRemote(s.rentries ?? const [])) e.name];
+
+  List<sftp.SftpEntry> _sortedRemote(List<sftp.SftpEntry> entries) {
+    final sorted = [...entries];
+    sorted.sort((a, b) {
+      if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sorted;
+  }
+
+  /// 本机目标名是否已被文件或目录占用。
+  bool _localExists(_Side dst, String name) {
+    final p = _joinLocal(dst, name);
+    if (p == null) return false;
+    return File(p).existsSync() || Directory(p).existsSync();
+  }
+
+  /// 批量传输：同一侧选中的条目逐条入队。按两侧类型分派：
   ///   文件：本地→远端 upload；远端→本地 download；远端→远端 copy
   ///   目录：远端→本地 tarDownload（<名>.tar.gz）；远端→远端 copyDir 递归复制
-  Future<void> _transfer(
-    _Side src, {
-    sftp.SftpEntry? re,
-    _LocalEntry? le,
-  }) async {
+  /// - 目标同名冲突整批决策一次：跳过冲突项 / 全部覆盖 / 冲突项自动改名
+  /// - 远端→远端目录已存在：合并复制确认一次
+  /// - 本机目录不支持上传（跳过并提示；远端目录可打包下载/递归复制）
+  /// - 目标已在队列中的条目由队列去重，最后汇总提示
+  Future<void> _transferBatch(_Side src, List<_SelEntry> items) async {
+    if (items.isEmpty) return;
     final dst = _otherOf(src);
-    final name = re?.name ?? le!.name;
-    final isDir = re?.isDir ?? le!.isDir;
-
-    // 源侧路径
-    String? pathFrom;
-    BigInt? sessionFrom;
-    SftpRemoteSpec? specFrom;
-    if (src.isLocal) {
-      pathFrom = _joinLocal(src, name);
-      if (pathFrom == null) {
-        _err('请先选择本机目录');
-        return;
-      }
-    } else {
-      pathFrom = _joinRemote(src, name);
-      sessionFrom = src.sessionId;
-      specFrom = _specOf(src);
-    }
-
-    if (isDir && src.isLocal) {
-      _err('目录上传暂不支持；请在对侧创建目录后逐文件传输');
+    if (src.isLocal && dst.isLocal) {
+      _toast('两侧都是本机，无传输意义');
       return;
     }
 
-    // 目标侧路径 + 冲突检查
-    String pathTo;
     if (dst.isLocal) {
       if (dst.lpath == null) {
         // iOS 同走固定目录自愈（getDirectoryPath 在 iOS 未实现，兜底进 _pickLocalRoot
@@ -583,80 +652,172 @@ class _SftpDualPageState extends State<SftpDualPage> {
           await _pickLocalRoot(dst);
         }
         if (dst.lpath == null) {
-          _err('请先在对侧选择本机目录');
+          _toast('请先在对侧选择本机目录');
           return;
-        }
-      }
-      final localName = (!src.isLocal && isDir) ? '$name.tar.gz' : name;
-      pathTo = _joinLocal(dst, localName)!;
-      final conflict =
-          File(pathTo).existsSync() || Directory(pathTo).existsSync();
-      if (conflict) {
-        final act = await _conflictDialog(localName);
-        if (act == null || act == ConflictAction.skip) return;
-        if (act == ConflictAction.rename) {
-          pathTo = _joinLocal(
-            dst,
-            nextAvailableName(_localNames(dst), localName),
-          )!;
         }
       }
     } else {
       if (dst.sessionId == null) {
-        _err('对侧尚未连接完成');
+        _toast('对侧尚未连接完成');
         return;
       }
       if (dst.sessionId == src.sessionId) {
-        _err('源与目标为同一会话，无传输意义');
+        _toast('源与目标为同一会话，无传输意义');
         return;
       }
-      pathTo = _joinRemote(dst, name);
-      if (_remoteNames(dst).contains(name)) {
-        if (isDir) {
-          final ok = await _confirmMerge(name);
-          if (ok != true) return; // 合并复制：已存在目录跳过同大小文件续传
-        } else {
-          final act = await _conflictDialog(name);
-          if (act == null || act == ConflictAction.skip) return;
-          if (act == ConflictAction.rename) {
-            pathTo = _joinRemote(
-              dst,
-              nextAvailableName(_remoteNames(dst), name),
-            );
-          }
+      // 目标目录列表未加载完（刚连接/刚切目录）：此时按空列表判冲突会把同名文件
+      // 静默覆盖，宁可让用户稍后再拖
+      if (dst.rentries == null) {
+        _toast('对侧目录仍在读取中，请稍后再试');
+        return;
+      }
+    }
+    if (!src.isLocal && src.sessionId == null) {
+      _toast('源侧连接已断开');
+      return;
+    }
+    if (!mounted) return;
+
+    // 本机目录上传暂不支持
+    var skippedDirs = 0;
+    final sending = <_SelEntry>[];
+    for (final e in items) {
+      if (e.isDir && src.isLocal) {
+        skippedDirs++;
+      } else {
+        sending.add(e);
+      }
+    }
+    if (skippedDirs > 0) {
+      _toast('目录上传暂不支持，已跳过 $skippedDirs 个目录');
+    }
+    if (sending.isEmpty) return;
+
+    // 远端目录打包到本机时目标名带 .tar.gz
+    String targetNameOf(_SelEntry e) =>
+        (!src.isLocal && e.isDir && dst.isLocal) ? '${e.name}.tar.gz' : e.name;
+
+    final existing = dst.isLocal ? <String>{} : _remoteNames(dst);
+    final conflicts = <_SelEntry>[];
+    final reserved = <String>{};
+    for (final e in sending) {
+      final n = targetNameOf(e);
+      final taken =
+          reserved.contains(n) ||
+          existing.contains(n) ||
+          (dst.isLocal && _localExists(dst, n));
+      if (taken) {
+        conflicts.add(e);
+      } else {
+        reserved.add(n);
+      }
+    }
+
+    ConflictAction? policy;
+    if (conflicts.isNotEmpty) {
+      final act = await _conflictDialogBatch(conflicts.length);
+      if (!mounted) return;
+      if (act == null) return; // 取消：整批不传
+      policy = act;
+      if (act == ConflictAction.skip) {
+        sending.removeWhere(conflicts.contains);
+        if (sending.isEmpty) return;
+      }
+    }
+
+    // 远端→远端目录已存在且选择覆盖：目录不可"覆盖"，只能合并复制，
+    // 确认一次（已存在且同大小的文件跳过，其余覆盖）
+    if (!src.isLocal && !dst.isLocal && policy == ConflictAction.overwrite) {
+      final merging = [
+        for (final e in sending)
+          if (e.isDir && existing.contains(targetNameOf(e))) e,
+      ];
+      if (merging.isNotEmpty) {
+        final ok = await _confirmMerge(
+          merging.first.name,
+          count: merging.length,
+        );
+        if (!mounted) return;
+        if (ok != true) {
+          sending.removeWhere(merging.contains);
+          if (sending.isEmpty) return;
         }
       }
     }
 
-    final SftpJobKind kind;
-    BigInt? sessionTo;
-    if (src.isLocal) {
-      kind = SftpJobKind.upload;
-      sessionTo = dst.sessionId;
-    } else if (dst.isLocal) {
-      kind = isDir ? SftpJobKind.tarDownload : SftpJobKind.download;
-    } else {
-      kind = isDir ? SftpJobKind.copyDir : SftpJobKind.copy;
-      sessionTo = dst.sessionId;
-    }
-    final displayName = (!src.isLocal && isDir && dst.isLocal)
-        ? '$name.tar.gz'
-        : name;
-
-    final job = _queue.enqueue(
-      kind: kind,
-      pathFrom: pathFrom,
-      pathTo: pathTo,
-      name: displayName,
-      sessionFrom: sessionFrom,
-      sessionTo: sessionTo,
-      specFrom: specFrom,
-    );
-    if (job == null) {
-      _err('该目标已在传输队列中');
+    // 弹窗/选目录期间连接可能掉线：入队前再校验一次，
+    // 否则 FrbSftpTransport 的 sessionId! 会在任务启动时空断言
+    if (!src.isLocal && src.sessionId == null) {
+      _toast('源侧连接已断开，传输已取消');
       return;
     }
-    _registerAutoRefresh(job, dst);
+    if (!dst.isLocal && dst.sessionId == null) {
+      _toast('对侧连接已断开，传输已取消');
+      return;
+    }
+
+    final allocated = <String>{...reserved};
+    var duplicated = 0;
+    for (final e in sending) {
+      var name = targetNameOf(e);
+      if (policy == ConflictAction.rename && conflicts.contains(e)) {
+        final taken = {...existing, ...allocated};
+        name = dst.isLocal
+            ? allocateUniqueName(
+                name,
+                taken: taken,
+                exists: (n) => _localExists(dst, n),
+              )
+            : allocateUniqueName(name, taken: taken);
+      }
+      allocated.add(name);
+
+      final String pathFrom;
+      final BigInt? sessionFrom;
+      final SftpRemoteSpec? specFrom;
+      if (src.isLocal) {
+        pathFrom = _joinLocal(src, e.name)!;
+        sessionFrom = null;
+        specFrom = null;
+      } else {
+        pathFrom = _joinRemote(src, e.name);
+        sessionFrom = src.sessionId;
+        specFrom = _specOf(src);
+      }
+      final pathTo = dst.isLocal
+          ? _joinLocal(dst, name)!
+          : _joinRemote(dst, name);
+
+      final SftpJobKind kind;
+      BigInt? sessionTo;
+      if (src.isLocal) {
+        kind = SftpJobKind.upload;
+        sessionTo = dst.sessionId;
+      } else if (dst.isLocal) {
+        kind = e.isDir ? SftpJobKind.tarDownload : SftpJobKind.download;
+      } else {
+        kind = e.isDir ? SftpJobKind.copyDir : SftpJobKind.copy;
+        sessionTo = dst.sessionId;
+      }
+
+      final job = _queue.enqueue(
+        kind: kind,
+        pathFrom: pathFrom,
+        pathTo: pathTo,
+        name: name,
+        sessionFrom: sessionFrom,
+        sessionTo: sessionTo,
+        specFrom: specFrom,
+      );
+      if (job == null) {
+        duplicated++;
+        continue;
+      }
+      _registerAutoRefresh(job, dst);
+    }
+    if (duplicated > 0) {
+      _toast('$duplicated 项已在传输队列中，已跳过');
+    }
   }
 
   SftpRemoteSpec _specOf(_Side s) => SftpRemoteSpec(
@@ -672,16 +833,11 @@ class _SftpDualPageState extends State<SftpDualPage> {
   void _registerAutoRefresh(SftpTransferJob job, _Side dst) {
     final path = job.targetPath;
     final idx = _indexOf(dst);
-    final dir = dst.isLocal ? _localParentOf(path) : _remoteParentOf(path);
-    _autoRefresh[job] = (idx, dir);
+    _autoRefresh[job] = (idx, _parentOf(path));
   }
 
-  String _remoteParentOf(String path) {
-    final idx = path.lastIndexOf('/');
-    return idx <= 0 ? '/' : path.substring(0, idx);
-  }
-
-  String _localParentOf(String path) {
+  /// 目标路径的父目录（目标侧刷新用；本机与远端同一套 `/` 语义）。
+  String _parentOf(String path) {
     final idx = path.lastIndexOf('/');
     return idx <= 0 ? '/' : path.substring(0, idx);
   }
@@ -715,6 +871,238 @@ class _SftpDualPageState extends State<SftpDualPage> {
         }
       });
     }
+  }
+
+  // ---------- 多选与右键菜单 ----------
+
+  /// 行点击：桌面单击替换 / Ctrl(⌘) 单击切换 / Shift 连选；手机轻点切换。
+  /// 修饰键在回调时刻读取（点击时按下的键才有效）。
+  void _tapRow(
+    _Side s,
+    String name,
+    List<String> ordered, {
+    required bool touch,
+  }) {
+    final kb = HardwareKeyboard.instance;
+    final mode = sftpSelectModeFor(
+      shift: kb.isShiftPressed,
+      // macOS 习惯 ⌘，Windows/Linux 习惯 Ctrl；iOS 外接键盘同样用 ⌘
+      toggleKey: Platform.isMacOS || Platform.isIOS
+          ? kb.isMetaPressed
+          : kb.isControlPressed,
+      touch: touch,
+    );
+    setState(() {
+      s.selection = s.selection.tap(name: name, ordered: ordered, mode: mode);
+    });
+  }
+
+  /// 行右键菜单（手机长按走同一入口）。
+  /// 右键未选中行：先把选区替换为该行（Finder/资源管理器习惯）；
+  /// 右键已选中行：作用于整个选区（多选时给批量动作）。
+  Future<void> _showRowMenu(
+    _Side s,
+    _SelEntry entry,
+    Offset globalPosition,
+  ) async {
+    if (!s.selection.contains(entry.name)) {
+      setState(() {
+        s.selection = SftpSelection(names: {entry.name}, anchor: entry.name);
+      });
+    }
+    final actions = s.selection.length > 1
+        ? _batchActions(s)
+        : _rowActions(s, entry);
+    actions.add(
+      _RowAction(
+        label: '取消选择',
+        icon: Icons.deselect,
+        onTap: () => setState(() => s.selection = SftpSelection.empty),
+      ),
+    );
+    final overlay = Overlay.of(context).context.findRenderObject();
+    final size = overlay is RenderBox
+        ? overlay.size
+        : MediaQuery.sizeOf(context);
+    final right = size.width - globalPosition.dx;
+    final bottom = size.height - globalPosition.dy;
+    final choice = await showMenu<int>(
+      context: context,
+      color: Et.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        right < 0 ? 0 : right,
+        bottom < 0 ? 0 : bottom,
+      ),
+      items: _menuItems(actions),
+    );
+    if (!mounted || choice == null) return;
+    if (choice < 0 || choice >= actions.length) return;
+    actions[choice].onTap();
+  }
+
+  /// 单行动作（⋮ 菜单与右键菜单共用）。
+  /// 注意：行 ⋮ 始终只作用于本行（控件语义）；多选批量操作走右键/选区操作条。
+  List<_RowAction> _rowActions(_Side s, _SelEntry entry) {
+    final other = _otherOf(s);
+    final otherLabel = other.label;
+    if (s.isLocal) {
+      final canUpload = !other.isLocal && other.sessionId != null;
+      return [
+        if (!entry.isDir && canUpload)
+          _RowAction(
+            label: '上传到 $otherLabel',
+            icon: Icons.upload_outlined,
+            onTap: () => unawaited(_transfer(s, le: entry.local)),
+          ),
+        _RowAction(
+          label: '重命名',
+          icon: Icons.drive_file_rename_outline,
+          onTap: () => unawaited(_rename(s, le: entry.local)),
+        ),
+        _RowAction(
+          label: '删除',
+          icon: Icons.delete_outline,
+          destructive: true,
+          onTap: () => unawaited(_delete(s, le: entry.local)),
+        ),
+      ];
+    }
+    final e = entry.remote!;
+    return [
+      if (_canTransfer(s))
+        _RowAction(
+          label: e.isDir
+              ? (other.isLocal ? '打包下载到本机（.tar.gz）' : '复制到 $otherLabel（递归）')
+              : (other.isLocal ? '下载到本机' : '直传到 $otherLabel'),
+          icon: e.isDir ? Icons.folder_zip_outlined : Icons.swap_horiz,
+          onTap: () => unawaited(_transfer(s, re: e)),
+        ),
+      if (!e.isDir)
+        _RowAction(
+          label: '编辑',
+          icon: Icons.edit_outlined,
+          onTap: () => unawaited(_editRemote(s, e)),
+        ),
+      _RowAction(
+        label: '重命名',
+        icon: Icons.drive_file_rename_outline,
+        onTap: () => unawaited(_rename(s, re: e)),
+      ),
+      _RowAction(
+        label: '删除',
+        icon: Icons.delete_outline,
+        destructive: true,
+        onTap: () => unawaited(_delete(s, re: e)),
+      ),
+    ];
+  }
+
+  /// 多选批量动作（右键菜单/选区操作条共用）。
+  List<_RowAction> _batchActions(_Side s) {
+    final items = _selectedEntries(s);
+    final other = _otherOf(s);
+    final transferable = items.where((e) => !(e.isDir && s.isLocal)).length;
+    return [
+      if (_canTransfer(s) && transferable > 0)
+        _RowAction(
+          // 本机目录会被跳过：计数按实际可传条目，不按选区大小
+          label: '传输 $transferable 项到 ${other.label}',
+          icon: Icons.swap_horiz,
+          onTap: () => unawaited(_transferBatch(s, items)),
+        ),
+      _RowAction(
+        label: '删除 ${items.length} 项',
+        icon: Icons.delete_outline,
+        destructive: true,
+        onTap: () => unawaited(_deleteItems(s, items)),
+      ),
+    ];
+  }
+
+  /// 选区操作条：选中非空时显示（桌面右键的显式入口，手机批量操作的唯一入口）。
+  /// 手机宽度紧：只给图标（tooltip 说明动作）；桌面给文字按钮。
+  Widget _selectionBar(_Side s, {required bool compact}) {
+    if (s.selection.isEmpty) return const SizedBox.shrink();
+    final items = _selectedEntries(s);
+    if (items.isEmpty) return const SizedBox.shrink();
+    final other = _otherOf(s);
+    final transferable = items.where((e) => !(e.isDir && s.isLocal)).length;
+    final textStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      minimumSize: const Size(0, 34),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+    return Container(
+      color: Et.accent.withValues(alpha: 0.10),
+      padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '已选 ${items.length} 项',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Et.textPrimary,
+              ),
+            ),
+          ),
+          if (_canTransfer(s) && transferable > 0)
+            if (compact)
+              IconButton(
+                onPressed: () => unawaited(_transferBatch(s, items)),
+                tooltip: '传输 $transferable 项到 ${other.label}',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.swap_horiz, size: 19, color: Et.accent),
+              )
+            else
+              TextButton.icon(
+                onPressed: () => unawaited(_transferBatch(s, items)),
+                style: textStyle,
+                icon: const Icon(Icons.swap_horiz, size: 17),
+                label: ConstrainedBox(
+                  // 主机名可自定义：窄桌面（双栏各 ~359dp）必须截断，
+                  // 否则 Row 非 flex 子项直接 RenderFlex 溢出
+                  constraints: const BoxConstraints(maxWidth: 140),
+                  child: Text(
+                    '传到 ${other.label}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ),
+              ),
+          if (compact)
+            IconButton(
+              onPressed: () => unawaited(_deleteItems(s, items)),
+              tooltip: '删除 ${items.length} 项',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.delete_outline, size: 19, color: Et.danger),
+            )
+          else
+            TextButton.icon(
+              onPressed: () => unawaited(_deleteItems(s, items)),
+              style: textStyle,
+              icon: Icon(Icons.delete_outline, size: 17, color: Et.danger),
+              label: Text(
+                '删除',
+                style: TextStyle(fontSize: 12.5, color: Et.danger),
+              ),
+            ),
+          IconButton(
+            onPressed: () => setState(() => s.selection = SftpSelection.empty),
+            tooltip: '取消选择',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close, size: 18, color: Et.textSecondary),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------- 远端编辑与写操作 ----------
@@ -790,47 +1178,77 @@ class _SftpDualPageState extends State<SftpDualPage> {
     }
   }
 
-  Future<void> _delete(_Side s, {sftp.SftpEntry? re, _LocalEntry? le}) async {
-    final name = re?.name ?? le!.name;
-    final isDir = re?.isDir ?? le!.isDir;
-    final ok = await _confirmDelete(name, isDir, remote: !s.isLocal);
-    if (ok != true) return;
-    if (_busy) return;
+  Future<void> _delete(_Side s, {sftp.SftpEntry? re, _LocalEntry? le}) =>
+      _deleteItems(s, [
+        if (re != null) _SelEntry.remote(re) else _SelEntry.local(le!),
+      ]);
+
+  /// 批量删除（⋮ 菜单单条删除走同一条路径）。逐条执行并汇总失败：
+  /// 目录仅支持空目录（rmdir 语义），非空目录会失败但不影响其余条目。
+  Future<void> _deleteItems(_Side s, List<_SelEntry> items) async {
+    if (items.isEmpty) return;
+    // 写操作互斥在确认前检查：否则用户确认后才因 _busy 静默返回，等于白点
+    if (_busy) {
+      _toast('有写操作进行中，请稍后再试');
+      return;
+    }
+    final ok = await _confirmDeleteItems(items, remote: !s.isLocal);
+    if (ok != true || !mounted) return;
     setState(() => _busy = true);
-    try {
-      if (s.isLocal) {
-        final p = _joinLocal(s, name)!;
-        if (isDir) {
-          await Directory(p).delete(); // 仅空目录（rmdir 语义）
+    final failures = <String>[];
+    for (final e in items) {
+      try {
+        if (s.isLocal) {
+          final p = _joinLocal(s, e.name)!;
+          if (e.isDir) {
+            await Directory(p).delete(); // 仅空目录（rmdir 语义）
+          } else {
+            await File(p).delete();
+          }
         } else {
-          await File(p).delete();
+          if (e.isDir) {
+            await sftp.sftpRmdir(
+              id: s.sessionId!,
+              path: _joinRemote(s, e.name),
+            );
+          } else {
+            await sftp.sftpRemove(
+              id: s.sessionId!,
+              path: _joinRemote(s, e.name),
+            );
+          }
         }
-        await _lsLocal(s);
-      } else {
-        if (isDir) {
-          await sftp.sftpRmdir(id: s.sessionId!, path: _joinRemote(s, name));
-        } else {
-          await sftp.sftpRemove(id: s.sessionId!, path: _joinRemote(s, name));
-        }
-        await _list(s);
+      } catch (err) {
+        failures.add('${e.name}: $err');
       }
-    } catch (e) {
-      _err('删除失败: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    // 一次刷新（`_list`/`_lsLocal` 同时清空选区）
+    if (s.isLocal) {
+      await _lsLocal(s);
+    } else {
+      await _list(s);
+    }
+    if (failures.isNotEmpty && mounted) {
+      // 最多列 3 条：批量失败时第一条信息通常不足以定位
+      final preview = failures.take(3).join('；');
+      final more = failures.length > 3 ? ' 等' : '';
+      _err('${failures.length} 项删除失败：$preview$more');
     }
   }
 
   // ---------- 通用 UI ----------
 
-  Future<ConflictAction?> _conflictDialog(String name) {
+  /// 批量冲突决策：整批一次（逐条问会刷屏；批量传输时同名项通常成批出现）。
+  Future<ConflictAction?> _conflictDialogBatch(int count) {
     return showDialog<ConflictAction>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
-          '「$name」已存在',
+          '$count 项在目标侧已存在',
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
@@ -838,7 +1256,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
           ),
         ),
         content: Text(
-          '目标侧已有同名条目，如何处理？',
+          '如何处理这些同名条目？',
           style: TextStyle(
             fontSize: 13.5,
             height: 1.5,
@@ -862,21 +1280,21 @@ class _SftpDualPageState extends State<SftpDualPage> {
                 borderRadius: BorderRadius.circular(9),
               ),
             ),
-            child: const Text('覆盖'),
+            child: const Text('全部覆盖'),
           ),
         ],
       ),
     );
   }
 
-  Future<bool?> _confirmMerge(String name) {
+  Future<bool?> _confirmMerge(String name, {int count = 1}) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Et.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
-          '目录「$name」已存在',
+          count > 1 ? '$count 个目录在目标侧已存在' : '目录「$name」已存在',
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
@@ -912,11 +1330,22 @@ class _SftpDualPageState extends State<SftpDualPage> {
     );
   }
 
-  Future<bool?> _confirmDelete(
-    String name,
-    bool isDir, {
+  Future<bool?> _confirmDeleteItems(
+    List<_SelEntry> items, {
     required bool remote,
   }) {
+    final who = remote ? '远端' : '本机';
+    final count = items.length;
+    final String question;
+    if (count == 1) {
+      final e = items.first;
+      question = e.isDir
+          ? '删除$who空目录「${e.name}」？（目录须为空）'
+          : '删除$who文件「${e.name}」？不可恢复。';
+    } else {
+      final hasDir = items.any((e) => e.isDir);
+      question = '删除$who $count 项？${hasDir ? '（目录须为空，非空目录会失败）' : ''}不可恢复。';
+    }
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -931,9 +1360,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
           ),
         ),
         content: Text(
-          remote
-              ? (isDir ? '删除远端空目录「$name」？（目录须为空）' : '删除远端文件「$name」？不可恢复。')
-              : (isDir ? '删除本机空目录「$name」？（目录须为空）' : '删除本机文件「$name」？不可恢复。'),
+          question,
           style: TextStyle(
             fontSize: 13.5,
             height: 1.5,
@@ -963,6 +1390,12 @@ class _SftpDualPageState extends State<SftpDualPage> {
   void _err(String msg) {
     if (!mounted) return;
     setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 仅提示，不碰 _busy（_err 会解除写互斥，非错误提示不该顺带解除）。
+  void _toast(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
@@ -1211,7 +1644,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
                 Expanded(
                   child: _sideBody(
                     _activeSide == 0 ? _l : _r,
-                    dragEnabled: false,
+                    compact: true,
                   ),
                 ),
               ],
@@ -1222,14 +1655,14 @@ class _SftpDualPageState extends State<SftpDualPage> {
                 Expanded(
                   child: _dropPanel(
                     _l,
-                    child: _sideBody(_l, dragEnabled: true),
+                    child: _sideBody(_l, compact: false),
                   ),
                 ),
                 VerticalDivider(width: 1, thickness: 1, color: Et.cardBorder),
                 Expanded(
                   child: _dropPanel(
                     _r,
-                    child: _sideBody(_r, dragEnabled: true),
+                    child: _sideBody(_r, compact: false),
                   ),
                 ),
               ],
@@ -1241,7 +1674,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
       ? (s.lpath ?? '本机未选择目录')
       : '${s.spec.host!.username}@${s.spec.host!.hostname}:${s.rpath}';
 
-  Widget _sideBody(_Side s, {required bool dragEnabled}) {
+  Widget _sideBody(_Side s, {required bool compact}) {
     if (!s.isLocal && s.phase == _SidePhase.connecting) {
       return _note('连接 ${s.label} 中…', spinner: true);
     }
@@ -1300,10 +1733,11 @@ class _SftpDualPageState extends State<SftpDualPage> {
       children: [
         _panelHeader(s),
         Divider(height: 1, color: Et.cardBorder),
+        _selectionBar(s, compact: compact),
         Expanded(
           child: s.isLocal
-              ? _localList(s, dragEnabled: dragEnabled)
-              : _remoteList(s, dragEnabled: dragEnabled),
+              ? _localList(s, compact: compact)
+              : _remoteList(s, compact: compact),
         ),
       ],
     );
@@ -1382,15 +1816,12 @@ class _SftpDualPageState extends State<SftpDualPage> {
     );
   }
 
-  Widget _remoteList(_Side s, {required bool dragEnabled}) {
+  Widget _remoteList(_Side s, {required bool compact}) {
     final entries = s.rentries;
     if (entries == null) return _note('读取目录中…', spinner: true);
     // 与本地列表同规则排序：目录在前，名称不区分大小写（评审 P2）
-    final sorted = [...entries]
-      ..sort((a, b) {
-        if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
+    final sorted = _sortedRemote(entries);
+    final ordered = [for (final e in sorted) e.name];
     if (sorted.isEmpty) {
       return s.rpath == '/' || s.rpath.isEmpty
           ? _note('空目录')
@@ -1420,7 +1851,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
     final canUp = s.rpath != '/' && s.rpath.isNotEmpty;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
-      itemCount: entries.length + (canUp ? 1 : 0),
+      itemCount: sorted.length + (canUp ? 1 : 0),
       itemBuilder: (context, i) {
         if (i == 0 && canUp) {
           return ListTile(
@@ -1438,13 +1869,9 @@ class _SftpDualPageState extends State<SftpDualPage> {
           );
         }
         final e = sorted[i - (canUp ? 1 : 0)];
-        final other = _otherOf(s);
-        final canTransfer =
-            other.isLocal ||
-            (other.sessionId != null && other.sessionId != s.sessionId);
-        final otherLabel = other.isLocal ? '本机' : other.label;
+        final canTransfer = _canTransfer(s);
         return _maybeDrag(
-          enabled: dragEnabled && canTransfer,
+          enabled: !compact && canTransfer,
           src: s,
           name: e.name,
           isDir: e.isDir,
@@ -1457,46 +1884,22 @@ class _SftpDualPageState extends State<SftpDualPage> {
               _fmtTime(e.mtime),
             ].join(' · '),
             onOpen: e.isDir ? () => _enterRemote(s, e) : null,
-            selected: s.selected == e.name,
-            onSelect: () => setState(
-              () => s.selected = s.selected == e.name ? null : e.name,
-            ),
-            actions: [
-              if (canTransfer)
-                _RowAction(
-                  label: e.isDir
-                      ? (other.isLocal
-                            ? '打包下载到本机（.tar.gz）'
-                            : '复制到 $otherLabel（递归）')
-                      : (other.isLocal ? '下载到本机' : '直传到 $otherLabel'),
-                  icon: e.isDir ? Icons.folder_zip_outlined : Icons.swap_horiz,
-                  onTap: () => _transfer(s, re: e),
-                ),
-              if (!e.isDir)
-                _RowAction(
-                  label: '编辑',
-                  icon: Icons.edit_outlined,
-                  onTap: () => _editRemote(s, e),
-                ),
-              _RowAction(
-                label: '重命名',
-                icon: Icons.drive_file_rename_outline,
-                onTap: () => _rename(s, re: e),
-              ),
-              _RowAction(
-                label: '删除',
-                icon: Icons.delete_outline,
-                destructive: true,
-                onTap: () => _delete(s, re: e),
-              ),
-            ],
+            selected: s.selection.contains(e.name),
+            onSelect: () => _tapRow(s, e.name, ordered, touch: compact),
+            onContextMenu: (pos) =>
+                unawaited(_showRowMenu(s, _SelEntry.remote(e), pos)),
+            // 手机没有右键：长按等价入口（桌面不用长按，避免鼠标长按误触）
+            onLongPressMenu: compact
+                ? (pos) => unawaited(_showRowMenu(s, _SelEntry.remote(e), pos))
+                : null,
+            actions: _rowActions(s, _SelEntry.remote(e)),
           ),
         );
       },
     );
   }
 
-  Widget _localList(_Side s, {required bool dragEnabled}) {
+  Widget _localList(_Side s, {required bool compact}) {
     final entries = s.lentries;
     if (s.lpath == null) {
       return Center(
@@ -1550,8 +1953,8 @@ class _SftpDualPageState extends State<SftpDualPage> {
           : _note('空目录');
     }
     final canUp = s.lroot != null && s.lpath != s.lroot; // 浏览根不提供上级
-    final other = _otherOf(s);
-    final canUpload = !other.isLocal && other.sessionId != null;
+    final canUpload = !_otherOf(s).isLocal && _otherOf(s).sessionId != null;
+    final ordered = [for (final e in entries) e.name];
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 20),
       itemCount: entries.length + (canUp ? 1 : 0),
@@ -1573,7 +1976,7 @@ class _SftpDualPageState extends State<SftpDualPage> {
         }
         final e = entries[i - (canUp ? 1 : 0)];
         return _maybeDrag(
-          enabled: dragEnabled && !e.isDir && canUpload,
+          enabled: !compact && !e.isDir && canUpload,
           src: s,
           name: e.name,
           isDir: e.isDir,
@@ -1586,29 +1989,14 @@ class _SftpDualPageState extends State<SftpDualPage> {
               _fmtTime(e.mtime),
             ].join(' · '),
             onOpen: e.isDir ? () => _enterLocal(s, e) : null,
-            selected: s.selected == e.name,
-            onSelect: () => setState(
-              () => s.selected = s.selected == e.name ? null : e.name,
-            ),
-            actions: [
-              if (!e.isDir && canUpload)
-                _RowAction(
-                  label: '上传到 ${other.label}',
-                  icon: Icons.upload_outlined,
-                  onTap: () => _transfer(s, le: e),
-                ),
-              _RowAction(
-                label: '重命名',
-                icon: Icons.drive_file_rename_outline,
-                onTap: () => _rename(s, le: e),
-              ),
-              _RowAction(
-                label: '删除',
-                icon: Icons.delete_outline,
-                destructive: true,
-                onTap: () => _delete(s, le: e),
-              ),
-            ],
+            selected: s.selection.contains(e.name),
+            onSelect: () => _tapRow(s, e.name, ordered, touch: compact),
+            onContextMenu: (pos) =>
+                unawaited(_showRowMenu(s, _SelEntry.local(e), pos)),
+            onLongPressMenu: compact
+                ? (pos) => unawaited(_showRowMenu(s, _SelEntry.local(e), pos))
+                : null,
+            actions: _rowActions(s, _SelEntry.local(e)),
           ),
         );
       },
@@ -1632,32 +2020,35 @@ class _SftpDualPageState extends State<SftpDualPage> {
   );
 }
 
-/// 拖放载荷：哪一侧的哪一条。落点只认 sideIndex，路径由 _transfer 按对侧当前目录算。
+/// 拖放载荷：哪一侧的哪一行（锚点），附带锚点条目快照。
+/// 落点只认 sideIndex；多选时由锚点是否在选区内解析出全部条目（见 _dragEntries），
+/// 松手时才定稿；列表若在拖拽期间刷新，退回快照条目。
 class _SftpDrag {
-  _SftpDrag({
+  const _SftpDrag({
     required this.sideIndex,
-    required this.name,
-    required this.isDir,
+    required this.anchorName,
     this.remote,
     this.local,
   }) : assert(remote != null || local != null);
 
   final int sideIndex;
-  final String name;
-  final bool isDir;
+  final String anchorName;
   final sftp.SftpEntry? remote;
   final _LocalEntry? local;
 }
 
 /// 跟手的文件名芯片。左上角锚在指针上，再往右下偏一点，避免挡住落点。
+/// 多选整拖时显示 "N 项"（数量 = 起拖那一刻的选区大小）。
 class _DragChip extends StatelessWidget {
-  const _DragChip({required this.name, required this.isDir});
+  const _DragChip({required this.name, required this.isDir, this.count = 1});
 
   final String name;
   final bool isDir;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
+    final multi = count > 1;
     return Transform.translate(
       offset: const Offset(14, 16),
       child: Material(
@@ -1674,17 +2065,19 @@ class _DragChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isDir
-                    ? Icons.folder_outlined
-                    : Icons.insert_drive_file_outlined,
+                multi
+                    ? Icons.copy_all_outlined
+                    : (isDir
+                          ? Icons.folder_outlined
+                          : Icons.insert_drive_file_outlined),
                 size: 16,
-                color: isDir ? Et.tileGroup : Et.textSecondary,
+                color: isDir || multi ? Et.tileGroup : Et.textSecondary,
               ),
               const SizedBox(width: 6),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: Text(
-                  name,
+                  multi ? '$count 项' : name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1749,6 +2142,39 @@ class _RowAction {
   final bool destructive;
 }
 
+/// 行操作菜单项（⋮ 弹层与右键 showMenu 共用同一套渲染）。
+List<PopupMenuEntry<int>> _menuItems(List<_RowAction> actions) => [
+  for (var i = 0; i < actions.length; i++)
+    PopupMenuItem(
+      value: i,
+      height: 40,
+      child: Row(
+        children: [
+          Icon(
+            actions[i].icon,
+            size: 17,
+            color: actions[i].destructive ? Et.danger : Et.textSecondary,
+          ),
+          const SizedBox(width: 8),
+          // 主机标签可能很长（批量动作文案含对侧名称）：单项放不下就省略，
+          // 否则 PopupMenu 宽度撑爆屏幕
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 300),
+            child: Text(
+              actions[i].label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: actions[i].destructive ? Et.danger : Et.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+];
+
 class _FileRow extends StatelessWidget {
   const _FileRow({
     required this.name,
@@ -1757,6 +2183,8 @@ class _FileRow extends StatelessWidget {
     required this.onOpen,
     required this.onSelect,
     this.selected = false,
+    this.onContextMenu,
+    this.onLongPressMenu,
     required this.actions,
   });
 
@@ -1766,6 +2194,13 @@ class _FileRow extends StatelessWidget {
   final VoidCallback? onOpen;
   final VoidCallback onSelect;
   final bool selected;
+
+  /// 右键菜单（桌面）：参数为指针全局坐标，菜单在该点弹出。
+  final void Function(Offset globalPosition)? onContextMenu;
+
+  /// 长按菜单（手机）：与右键同入口，参数为长按点全局坐标。
+  final void Function(Offset globalPosition)? onLongPressMenu;
+
   final List<_RowAction> actions;
 
   @override
@@ -1801,40 +2236,24 @@ class _FileRow extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         icon: Icon(Icons.more_vert, size: 19, color: Et.textSecondary),
         onSelected: (v) => actions[v].onTap(),
-        itemBuilder: (_) => [
-          for (var i = 0; i < actions.length; i++)
-            PopupMenuItem(
-              value: i,
-              height: 40,
-              child: Row(
-                children: [
-                  Icon(
-                    actions[i].icon,
-                    size: 17,
-                    color: actions[i].destructive
-                        ? Et.danger
-                        : Et.textSecondary,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    actions[i].label,
-                    style: TextStyle(
-                      fontSize: 13.5,
-                      color: actions[i].destructive
-                          ? Et.danger
-                          : Et.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
+        itemBuilder: (_) => _menuItems(actions),
       ),
       // 单击=选中（给视觉反馈与后续操作对象）；双击=打开/进入（Finder 习惯）
       onTap: onSelect,
     );
-    if (onOpen == null) return row;
-    return GestureDetector(onDoubleTap: onOpen, child: row);
+    if (onOpen == null && onContextMenu == null && onLongPressMenu == null) {
+      return row;
+    }
+    return GestureDetector(
+      onDoubleTap: onOpen,
+      onSecondaryTapDown: onContextMenu == null
+          ? null
+          : (d) => onContextMenu!(d.globalPosition),
+      onLongPressStart: onLongPressMenu == null
+          ? null
+          : (d) => onLongPressMenu!(d.globalPosition),
+      child: row,
+    );
   }
 }
 

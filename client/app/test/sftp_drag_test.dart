@@ -141,4 +141,47 @@ void main() {
     await tester.pump();
     expect(dropped, isEmpty, reason: '触摸纵移不开始拖');
   });
+
+  // MultiDragGestureRecognizer 默认 allowedButtonsFilter 只接受主键：
+  // 右键留给行菜单，不能顺手把文件拖起来。锁行为，防未来放开组合键回归。
+  testWidgets('右键拖动不开始拖（右键菜单手势不被抢）', (tester) async {
+    final dropped = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Stack(
+          children: [
+            Positioned.fill(
+              child: DragTarget<String>(
+                onAcceptWithDetails: (d) => dropped.add(d.data),
+                builder: (_, _, _) => const SizedBox.expand(),
+              ),
+            ),
+            Align(
+              alignment: Alignment.topLeft,
+              child: SftpPanelDraggable<String>(
+                data: 'a.txt',
+                feedback: const Material(child: Text('a.txt')),
+                child: const SizedBox(
+                  width: 80,
+                  height: 36,
+                  child: Text('a.txt'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final origin = tester.getCenter(find.text('a.txt'));
+    final right = await tester.startGesture(
+      origin,
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await right.moveBy(const Offset(0, 40));
+    await right.up();
+    await tester.pump();
+    expect(dropped, isEmpty, reason: '右键只用于弹菜单，不能把文件拖起来');
+  });
 }
