@@ -156,8 +156,19 @@ class AppState extends ChangeNotifier {
   /// （切页回来、WS 推送对账）一律静默，避免闪加载条。
   bool syncedOnce = false;
 
+  /// 最近访问（设备本地，不上中枢）：hostId → 最近一次打开终端/SFTP 的
+  /// epoch 毫秒。设备级便利数据（同 known_hosts，登出不清理）；只存 host id，
+  /// 不涉及敏感内容。本地 kv 保留上限，页面展示最近 10 台。
+  Map<String, int> _recentVisits = {};
+  static const _recentVisitsKvKey = 'recent_hosts';
+  static const _recentVisitsStoreLimit = 50;
+
+  /// Hosts 页「最近访问」模块的最大展示条数。
+  static const recentHostsLimit = 10;
+
   /// 启动引导：从本地库快照加载（离线可见），随后可调 refresh() 增量同步。
   Future<void> bootstrap() async {
+    _loadRecentVisits();
     try {
       final snap = jsonDecode(local.storeLoad()) as Map<String, dynamic>;
       final entities = (snap['entities'] as Map).cast<String, dynamic>();
@@ -167,6 +178,68 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       // 本地库不可用：内存空集继续（推送类操作仍可用）
     }
+  }
+
+  /// 从本地 kv 恢复最近访问（损坏/不可用则退化为空，不影响主流程）。
+  void _loadRecentVisits() {
+    try {
+      final raw = local.kvGet(key: _recentVisitsKvKey);
+      if (raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      _recentVisits = {
+        for (final e in decoded.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
+      };
+      _pruneRecentVisits();
+    } catch (_) {
+      // 无 FFI（测试）/ 本地库未初始化：保持内存值
+    }
+  }
+
+  void _pruneRecentVisits() {
+    if (_recentVisits.length <= _recentVisitsStoreLimit) return;
+    final sorted = _recentVisits.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    _recentVisits = {
+      for (final e in sorted.take(_recentVisitsStoreLimit)) e.key: e.value,
+    };
+  }
+
+  /// 记录一次主机访问（打开终端标签或用该主机开 SFTP 工作区时调用）。
+  /// [at] 仅供测试注入确定性时间。
+  void markHostVisited(String hostId, {DateTime? at}) {
+    _recentVisits[hostId] = (at ?? DateTime.now()).millisecondsSinceEpoch;
+    _pruneRecentVisits();
+    try {
+      local.kvPut(
+        key: _recentVisitsKvKey,
+        value: jsonEncode(_recentVisits),
+      );
+    } catch (_) {
+      // 落盘失败（无 FFI/库不可用）不阻断打开会话，内存态仍可用
+    }
+    notifyListeners();
+  }
+
+  /// 主机最近一次访问时刻（null = 从未访问）。
+  DateTime? recentVisitedAt(String hostId) {
+    final ms = _recentVisits[hostId];
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  /// 最近访问的主机（时间倒序，最多 [recentHostsLimit] 台）；已删除的主机
+  /// 自动排除（只认当前同步下来的 hosts）。
+  List<HostView> get recentHosts {
+    if (_recentVisits.isEmpty) return const [];
+    final byId = {for (final h in hosts) h.id: h};
+    final entries = _recentVisits.entries
+        .where((e) => byId.containsKey(e.key))
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return [
+      for (final e in entries.take(recentHostsLimit)) byId[e.key]!,
+    ];
   }
 
   /// 仅供测试注入实体快照（绕过 Rust 本地库 FFI；评审验证用，见 docs/code-review）。

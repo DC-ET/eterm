@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/app_state.dart';
 import 'add_host_dialog.dart';
 import 'theme.dart';
+import 'ui_utils.dart' show fmtLocalDateTime, fmtRelativeTime;
 
 class HostsPage extends StatefulWidget {
   const HostsPage({
@@ -204,7 +205,13 @@ class _HostsPageState extends State<HostsPage> {
         final gf = _matchedGroups(g);
         final exact = h.length == 1 ? h.first : null;
         final compact = MediaQuery.sizeOf(context).width < 720; // 手机竖屏
-        if (compact) return _mobileHosts(context, groups: gf, hosts: h);
+        // 最近访问是默认视图的快捷入口：搜索/分组过滤时让位给匹配结果
+        final recents =
+            _filtering ? const <HostView>[] : widget.app.recentHosts;
+        if (compact) {
+          return _mobileHosts(context,
+              groups: gf, hosts: h, recents: recents);
+        }
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
           child: Column(
@@ -317,7 +324,9 @@ class _HostsPageState extends State<HostsPage> {
                           // 同步失败不打断本地快照展示（离线可见）
                           if (widget.app.error != null)
                             _errorBanner(widget.app.error!),
-                          Expanded(child: _grid(groups: gf, hosts: h)),
+                          Expanded(
+                              child: _grid(
+                                  groups: gf, hosts: h, recents: recents)),
                         ],
                       ),
               ),
@@ -331,7 +340,9 @@ class _HostsPageState extends State<HostsPage> {
   // ---------- 手机布局（Termius 式：浅色 app bar + 单列列表卡 + FAB） ----------
 
   Widget _mobileHosts(BuildContext context,
-      {required List<GroupView> groups, required List<HostView> hosts}) {
+      {required List<GroupView> groups,
+      required List<HostView> hosts,
+      required List<HostView> recents}) {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -352,7 +363,8 @@ class _HostsPageState extends State<HostsPage> {
                     if (widget.app.error != null)
                       _errorBanner(widget.app.error!),
                     Expanded(
-                        child: _mobileList(groups: groups, hosts: hosts)),
+                        child: _mobileList(
+                            groups: groups, hosts: hosts, recents: recents)),
                   ],
                 ),
         ),
@@ -470,7 +482,9 @@ class _HostsPageState extends State<HostsPage> {
   }
 
   Widget _mobileList(
-      {required List<GroupView> groups, required List<HostView> hosts}) {
+      {required List<GroupView> groups,
+      required List<HostView> hosts,
+      required List<HostView> recents}) {
     if (widget.app.loading && hosts.isEmpty && groups.isEmpty) {
       return const _CenterNote('同步中…');
     }
@@ -506,6 +520,11 @@ class _HostsPageState extends State<HostsPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
       children: [
+        if (recents.isNotEmpty) ...[
+          const _SectionTitle('最近访问'),
+          _recentStrip(hosts: recents, compact: true),
+          const SizedBox(height: 4),
+        ],
         if (_groupFilter == null && groups.isNotEmpty) ...[
           const _SectionTitle('分组'),
           for (final grp in groups)
@@ -621,7 +640,9 @@ class _HostsPageState extends State<HostsPage> {
   }
 
   Widget _grid(
-      {required List<GroupView> groups, required List<HostView> hosts}) {
+      {required List<GroupView> groups,
+      required List<HostView> hosts,
+      required List<HostView> recents}) {
     if (widget.app.loading && hosts.isEmpty) {
       return const _CenterNote('同步中…');
     }
@@ -661,6 +682,10 @@ class _HostsPageState extends State<HostsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (recents.isNotEmpty) ...[
+            const _SectionTitle('最近访问'),
+            _recentStrip(hosts: recents, compact: false),
+          ],
           if (_groupFilter == null && groups.isNotEmpty) ...[
             const _SectionTitle('分组'),
             _cardGrid(
@@ -687,6 +712,34 @@ class _HostsPageState extends State<HostsPage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  /// 最近访问横向条（桌面/手机同源）：已按访问时间倒序，最多 10 台。
+  /// 用 SingleChildScrollView（同标题栏标签模式）：10 条全量构建、横滑查看。
+  Widget _recentStrip({required List<HostView> hosts, required bool compact}) {
+    return SizedBox(
+      height: compact ? 58 : 64,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
+        child: Row(
+          children: [
+            for (final (i, h) in hosts.indexed) ...[
+              if (i > 0) SizedBox(width: compact ? 8 : 10),
+              _RecentHostChip(
+                key: ValueKey('recent-host-${h.id}'),
+                host: h,
+                visitedAt: widget.app.recentVisitedAt(h.id),
+                open: widget.openHostIds.contains(h.id),
+                compact: compact,
+                onTap: () => _connect(h),
+                onMenu: (anchor) => _cardMenu(h, anchor),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -901,6 +954,123 @@ class _HostCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 「最近访问」横向条里的轻量主机卡：点击连接；右键/长按同主卡片菜单；
+/// 副标题显示相对访问时间（排序依据的可见化）。
+class _RecentHostChip extends StatelessWidget {
+  const _RecentHostChip({
+    super.key,
+    required this.host,
+    required this.visitedAt,
+    required this.open,
+    required this.compact,
+    required this.onTap,
+    required this.onMenu,
+  });
+
+  final HostView host;
+  final DateTime? visitedAt;
+  final bool open;
+  final bool compact;
+  final VoidCallback onTap;
+  final void Function(Rect anchor) onMenu;
+
+  void _menuAt(BuildContext ctx) {
+    final box = ctx.findRenderObject()! as RenderBox;
+    onMenu(box.localToGlobal(Offset.zero) & box.size);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = compact ? 30.0 : 34.0;
+    final radius = BorderRadius.circular(compact ? 16 : 12);
+    final tile = Material(
+      color: Et.card,
+      borderRadius: radius,
+      child: InkWell(
+        onTap: onTap,
+        onSecondaryTapUp: (d) => onMenu(
+            Rect.fromLTWH(d.globalPosition.dx, d.globalPosition.dy, 150, 1)),
+        onLongPress: () => _menuAt(context),
+        borderRadius: radius,
+        child: Container(
+          width: compact ? 196 : 236,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: iconSize,
+                    height: iconSize,
+                    decoration: BoxDecoration(
+                      color: Et.tileHost,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(Icons.dns_rounded,
+                        color: Colors.white, size: iconSize * 0.55),
+                  ),
+                  if (open)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2DA44E),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(host.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: compact ? 13 : 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: Et.textPrimary)),
+                    const SizedBox(height: 2),
+                    Text(
+                      visitedAt == null ? '' : fmtRelativeTime(visitedAt!),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: compact ? 11 : 11.5,
+                          color: Et.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    // 手机长按已用于打开菜单，不再挂 Tooltip（避免手势打架）
+    if (compact) return tile;
+    final who = host.username.isEmpty
+        ? host.hostname
+        : '${host.username}@${host.hostname}';
+    return Tooltip(
+      message: visitedAt == null
+          ? who
+          : '$who\n最近访问：${fmtLocalDateTime(visitedAt!)}',
+      waitDuration: const Duration(milliseconds: 450),
+      child: tile,
     );
   }
 }

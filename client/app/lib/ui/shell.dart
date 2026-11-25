@@ -87,6 +87,7 @@ class _ShellPageState extends State<ShellPage>
         activeTab = tabs.length - 1;
       }
     });
+    widget.app.markHostVisited(h.id); // Hosts 页「最近访问」按此排序
     FgService.setKeepAlive(tabs.isNotEmpty); // 前台服务保活 SSH（M1）
   }
 
@@ -106,6 +107,11 @@ class _ShellPageState extends State<ShellPage>
         activeTab = tabs.length - 1;
       }
     });
+    // 最近访问按端点算：主机侧（本机侧不算）都记一次
+    for (final side in [left, right]) {
+      final id = side.host?.id;
+      if (id != null) widget.app.markHostVisited(id);
+    }
     if (existing >= 0) {
       // 反向打开（B⇄A）：聚焦已有 A⇄B 标签，提示可直接从请求的左侧操作；
       // 不重建标签（方案 D4/P2-19）。
