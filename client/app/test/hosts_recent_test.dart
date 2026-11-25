@@ -180,6 +180,15 @@ void main() {
         .dx;
     expect(x3, lessThan(x2), reason: '最近访问的 h3 应排在 h2 左边');
 
+    // 用户反馈回归：最近访问卡必须与分组/主机网格卡同尺寸（同单元格宽/84 高）
+    final recentSize = tester.getSize(
+      find.byKey(const ValueKey('recent-host-h3')),
+    );
+    final gridSize = tester.getSize(
+      find.byKey(const ValueKey('host-card-h3')),
+    );
+    expect(recentSize, gridSize, reason: '最近访问卡与主机卡应等宽等高');
+
     // 搜索过滤态：最近访问模块让位（避免与匹配结果重复）
     await tester.enterText(find.byType(TextField).first, 'h1');
     await _pumpClean(tester);

@@ -702,6 +702,7 @@ class _HostsPageState extends State<HostsPage> {
             build: (i) {
               final h = hosts[i];
               return _HostCard(
+                key: ValueKey('host-card-${h.id}'),
                 host: h,
                 groupName: widget.app.groupName(h.groupId),
                 open: widget.openHostIds.contains(h.id),
@@ -716,32 +717,47 @@ class _HostsPageState extends State<HostsPage> {
     );
   }
 
-  /// 最近访问横向条（桌面/手机同源）：已按访问时间倒序，最多 10 台。
-  /// 用 SingleChildScrollView（同标题栏标签模式）：10 条全量构建、横滑查看。
+  /// 最近访问横向条：已是访问时间倒序，最多 10 台。
+  /// 桌面端卡片尺寸必须与 `_cardGrid` 单元格一致（同列宽公式/间距/84 高），
+  /// 否则和下方分组/主机卡「有大有小」（用户反馈）；手机端保持紧凑横滑条。
   Widget _recentStrip({required List<HostView> hosts, required bool compact}) {
-    return SizedBox(
-      height: compact ? 58 : 64,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
-        child: Row(
-          children: [
-            for (final (i, h) in hosts.indexed) ...[
-              if (i > 0) SizedBox(width: compact ? 8 : 10),
-              _RecentHostChip(
-                key: ValueKey('recent-host-${h.id}'),
-                host: h,
-                visitedAt: widget.app.recentVisitedAt(h.id),
-                open: widget.openHostIds.contains(h.id),
-                compact: compact,
-                onTap: () => _connect(h),
-                onMenu: (anchor) => _cardMenu(h, anchor),
-              ),
-            ],
-          ],
+    return LayoutBuilder(builder: (context, box) {
+      final cols = ((box.maxWidth ~/ 320) + 1).clamp(1, 4);
+      final cellWidth =
+          compact ? 196.0 : (box.maxWidth - (cols - 1) * 12) / cols;
+      return Padding(
+        // 与 _cardGrid 的 GridView padding 对齐（top 4 / bottom 6）
+        padding: compact
+            ? EdgeInsets.zero
+            : const EdgeInsets.only(top: 4, bottom: 6),
+        child: SizedBox(
+          height: compact ? 58 : 84,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: compact
+                ? const EdgeInsets.symmetric(horizontal: 2, vertical: 3)
+                : EdgeInsets.zero,
+            child: Row(
+              children: [
+                for (final (i, h) in hosts.indexed) ...[
+                  if (i > 0) SizedBox(width: compact ? 8 : 12),
+                  _RecentHostChip(
+                    key: ValueKey('recent-host-${h.id}'),
+                    host: h,
+                    width: cellWidth,
+                    visitedAt: widget.app.recentVisitedAt(h.id),
+                    open: widget.openHostIds.contains(h.id),
+                    compact: compact,
+                    onTap: () => _connect(h),
+                    onMenu: (anchor) => _cardMenu(h, anchor),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   /// 响应式 N 列卡片网格（Termius 三列观感）。
@@ -857,6 +873,7 @@ class _GroupCard extends StatelessWidget {
 
 class _HostCard extends StatelessWidget {
   const _HostCard({
+    super.key,
     required this.host,
     required this.groupName,
     required this.open,
@@ -958,12 +975,15 @@ class _HostCard extends StatelessWidget {
   }
 }
 
-/// 「最近访问」横向条里的轻量主机卡：点击连接；右键/长按同主卡片菜单；
+/// 「最近访问」横向条里的主机卡：点击连接；右键/长按同主卡片菜单；
 /// 副标题显示相对访问时间（排序依据的可见化）。
+/// 桌面端尺寸/圆角/图标/内边距对齐 `_HostCard`（宽由调用方按网格单元格注入），
+/// 手机端保持紧凑横滑条样式。
 class _RecentHostChip extends StatelessWidget {
   const _RecentHostChip({
     super.key,
     required this.host,
+    required this.width,
     required this.visitedAt,
     required this.open,
     required this.compact,
@@ -972,6 +992,7 @@ class _RecentHostChip extends StatelessWidget {
   });
 
   final HostView host;
+  final double width;
   final DateTime? visitedAt;
   final bool open;
   final bool compact;
@@ -985,8 +1006,8 @@ class _RecentHostChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconSize = compact ? 30.0 : 34.0;
-    final radius = BorderRadius.circular(compact ? 16 : 12);
+    final iconSize = compact ? 30.0 : 46.0;
+    final radius = BorderRadius.circular(compact ? 16 : Et.cardRadius);
     final tile = Material(
       color: Et.card,
       borderRadius: radius,
@@ -997,8 +1018,11 @@ class _RecentHostChip extends StatelessWidget {
         onLongPress: () => _menuAt(context),
         borderRadius: radius,
         child: Container(
-          width: compact ? 196 : 236,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          width: width,
+          height: compact ? null : 84, // 与 _cardGrid 的 mainAxisExtent 一致
+          padding: compact
+              ? const EdgeInsets.symmetric(horizontal: 10, vertical: 7)
+              : const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
               Stack(
@@ -1009,18 +1033,18 @@ class _RecentHostChip extends StatelessWidget {
                     height: iconSize,
                     decoration: BoxDecoration(
                       color: Et.tileHost,
-                      borderRadius: BorderRadius.circular(9),
+                      borderRadius: BorderRadius.circular(compact ? 9 : 10),
                     ),
                     child: Icon(Icons.dns_rounded,
-                        color: Colors.white, size: iconSize * 0.55),
+                        color: Colors.white, size: iconSize * 0.52),
                   ),
                   if (open)
                     Positioned(
                       right: -2,
                       top: -2,
                       child: Container(
-                        width: 10,
-                        height: 10,
+                        width: compact ? 10 : 11,
+                        height: compact ? 10 : 11,
                         decoration: BoxDecoration(
                           color: const Color(0xFF2DA44E),
                           shape: BoxShape.circle,
@@ -1030,7 +1054,7 @@ class _RecentHostChip extends StatelessWidget {
                     ),
                 ],
               ),
-              const SizedBox(width: 9),
+              SizedBox(width: compact ? 9 : 12),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -1040,21 +1064,31 @@ class _RecentHostChip extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: compact ? 13 : 13.5,
+                            fontSize: compact ? 13 : 15,
                             fontWeight: FontWeight.w600,
                             color: Et.textPrimary)),
-                    const SizedBox(height: 2),
+                    SizedBox(height: compact ? 2 : 3),
                     Text(
                       visitedAt == null ? '' : fmtRelativeTime(visitedAt!),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: compact ? 11 : 11.5,
+                          fontSize: compact ? 11 : 12.5,
                           color: Et.textSecondary),
                     ),
                   ],
                 ),
               ),
+              // 桌面与 _HostCard 一致露出 ⋯ 菜单入口（手机靠长按）
+              if (!compact)
+                Builder(
+                  builder: (btnCtx) => IconButton(
+                    icon: Icon(Icons.more_horiz,
+                        size: 18, color: Et.textSecondary),
+                    tooltip: '操作',
+                    onPressed: () => _menuAt(btnCtx),
+                  ),
+                ),
             ],
           ),
         ),
