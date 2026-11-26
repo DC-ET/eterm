@@ -717,7 +717,7 @@ void showUpdateInstallDialog(BuildContext context, UpdateInfo info) {
   );
 }
 
-enum _UpdatePhase { confirm, downloading, needPermission }
+enum _UpdatePhase { confirm, downloading, installing, needPermission }
 
 class _UpdateInstallDialog extends StatefulWidget {
   const _UpdateInstallDialog({required this.info});
@@ -772,13 +772,22 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
       _messenger?.showSnackBar(SnackBar(content: Text('下载更新失败: $e')));
       return;
     }
+    if (!mounted) return;
+    // build 5 线上实踩：_busy 是「确认/下载按钮防重」用的，下载完成后没释放就进
+    // _install，被 _install 开头的 _busy 守卫原路 return → 对话框永远停在 100%。
+    // 下载结束必须解锁；_install 会重新上锁并切到 installing。
+    _busy = false;
     await _install();
   }
 
   Future<void> _install() async {
     final path = _localPath;
-    if (path == null || _busy) return;
-    setState(() => _busy = true);
+    if (path == null || _busy || !mounted) return;
+    setState(() {
+      _busy = true;
+      // 76MB 拷进 PackageInstaller session 可能要数秒，不能再显示「下载中 100%」
+      _phase = _UpdatePhase.installing;
+    });
     final UpdateInstallAck ack;
     try {
       ack = await AppUpdate.instance.install(path);
@@ -812,6 +821,7 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
       case _UpdatePhase.confirm:
         return _busy ? null : _confirm;
       case _UpdatePhase.downloading:
+      case _UpdatePhase.installing:
         return null;
       case _UpdatePhase.needPermission:
         return (!_busy && _localPath != null) ? _install : null;
@@ -837,6 +847,7 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
           switch (_phase) {
             _UpdatePhase.confirm => '发现新版本',
             _UpdatePhase.downloading => '正在下载更新',
+            _UpdatePhase.installing => '正在安装更新',
             _UpdatePhase.needPermission => '需要安装权限',
           },
           style: TextStyle(
@@ -889,6 +900,16 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
                       : '下载中 ${(_progress! * 100).toStringAsFixed(0)}%',
                   style: TextStyle(
                       fontSize: 13, color: Et.textSecondary)),
+            ] else if (_phase == _UpdatePhase.installing) ...[
+              LinearProgressIndicator(
+                value: null,
+                color: Et.accent,
+                backgroundColor: Et.cardBorder,
+              ),
+              const SizedBox(height: 10),
+              Text('下载完成，正在校验并提交系统安装…',
+                  style: TextStyle(
+                      fontSize: 13, color: Et.textSecondary)),
             ] else ...[
               Text(
                   '系统需要「安装未知应用」授权：请在设置中选择 Eterm → 允许安装未知应用，'
@@ -903,14 +924,22 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
       ),
       actions: [
         TextButton(
-            onPressed: () {
-              if (_phase == _UpdatePhase.downloading) {
-                _cancel(); // 取消下载并关对话框（暂存文件即删）
-              } else {
-                Navigator.pop(context);
-              }
-            },
-            child: Text(_phase == _UpdatePhase.downloading ? '取消下载' : '取消',
+            // 安装阶段已提交，无法取消；禁用按钮避免误以为点掉就中止（返回键仍可关弹窗）
+            onPressed: _phase == _UpdatePhase.installing
+                ? null
+                : () {
+                    if (_phase == _UpdatePhase.downloading) {
+                      _cancel(); // 取消下载并关对话框（暂存文件即删）
+                    } else {
+                      Navigator.pop(context);
+                    }
+                  },
+            child: Text(
+                switch (_phase) {
+                  _UpdatePhase.downloading => '取消下载',
+                  _UpdatePhase.installing => '安装中…',
+                  _ => '取消',
+                },
                 style: TextStyle(color: Et.textSecondary))),
         FilledButton(
           onPressed: _primaryAction(),
@@ -925,6 +954,7 @@ class _UpdateInstallDialogState extends State<_UpdateInstallDialog> {
             _UpdatePhase.confirm =>
               Platform.isWindows ? '退出并安装' : '下载并安装',
             _UpdatePhase.downloading => '下载中…',
+            _UpdatePhase.installing => '安装中…',
             _UpdatePhase.needPermission => '已授权，重试',
           }),
         ),
