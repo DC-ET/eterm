@@ -196,8 +196,9 @@ void main() {
     expect(find.byKey(const ValueKey('recent-host-h3')), findsNothing);
   });
 
-  testWidgets('手机（<720）：最近访问横向条可挂载', (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
+  testWidgets('手机（<720）：最近访问用整行卡，与主机列表同尺寸', (tester) async {
+    // 高度放大到 2000，保证最近访问与下方主机列表都完成布局（可比较尺寸）
+    tester.view.physicalSize = const Size(400, 2000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -210,8 +211,21 @@ void main() {
     await _pumpClean(tester);
 
     expect(find.text('最近访问'), findsOneWidget);
-    expect(find.byKey(const ValueKey('recent-host-h1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('recent-host-h0')), findsOneWidget);
+    final r1 = find.byKey(const ValueKey('recent-mobile-host-h1'));
+    final r0 = find.byKey(const ValueKey('recent-mobile-host-h0'));
+    expect(r1, findsOneWidget);
+    expect(r0, findsOneWidget);
+    expect(
+      tester.getTopLeft(r1).dy,
+      lessThan(tester.getTopLeft(r0).dy),
+      reason: '最近访问的 h1 应排在 h0 上方',
+    );
+
+    // 用户反馈回归：手机端最近访问卡必须与主机列表卡同尺寸（同一 _MobileTile）
+    final grid = find.byKey(const ValueKey('mobile-host-h1'));
+    expect(grid, findsOneWidget);
+    expect(tester.getSize(r1), tester.getSize(grid),
+        reason: '最近访问卡与主机列表卡应等宽等高');
   });
 
   testWidgets('shell 打开 SFTP 工作区即记录端点主机的最近访问', (tester) async {
