@@ -852,6 +852,11 @@ async fn tar_download_inner(
         // 根目录打包会扫 /proc、/sys 等虚拟文件系统（大概率卡死/非零退出），直接拒绝
         return Err("不支持打包根目录 /，请选择具体目录".to_string());
     }
+    if !dir.starts_with('/') {
+        // 调用链恒为 realpath 起步的绝对路径；相对路径在下方 -C 拆分下会指向
+        // 错误目录（如 "foo" → tar -C / foo）。防御性拒绝（评审观察 5）。
+        return Err("目录路径必须以 / 开头（绝对路径）".to_string());
+    }
     let (parent, base) = dir
         .rsplit_once('/')
         .map(|(p, b)| (p.to_string(), b.to_string()))

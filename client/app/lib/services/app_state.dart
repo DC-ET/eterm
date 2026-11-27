@@ -155,6 +155,10 @@ class AppState extends ChangeNotifier {
   /// 本会话是否已完成过一次同步：冷启动首屏要"同步中"指示，之后的增量同步
   /// （切页回来、WS 推送对账）一律静默，避免闪加载条。
   bool syncedOnce = false;
+  /// 本会话是否已完成一次全量重放（评审 BUG-2 兜底）：首次同步从 cursor=0
+  /// 折叠全量（幂等 upsert），修复服务端历史上可能留下的游标空洞——此后不再
+  /// 变更的实体（漏 tombstone/漏 upsert）不再永久漏同步；之后各次刷新恢复增量。
+  bool _fullReplayed = false;
 
   /// 最近访问（设备本地，不上中枢）：hostId → 最近一次打开终端/SFTP 的
   /// epoch 毫秒。设备级便利数据（同 known_hosts，登出不清理）；只存 host id，
@@ -775,7 +779,14 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      var cursor = local.storeCursor().toInt();
+      // 首次同步走全量重放（cursor=0，评审 BUG-2 兜底，见 _fullReplayed 注释）；
+      // 游标读取失败（本地库暂不可用）同样退化为全量重放——安全侧。
+      var cursor = 0;
+      if (_fullReplayed) {
+        try {
+          cursor = local.storeCursor().toInt();
+        } catch (_) {}
+      }
       while (true) {
         final (changes, newCursor, hasMore) = await api.pullBatch(cursor);
         if (changes.isNotEmpty) {
@@ -787,6 +798,7 @@ class AppState extends ChangeNotifier {
         cursor = newCursor;
         if (!hasMore) break;
       }
+      _fullReplayed = true;
       await bootstrap(); // 快照重建（保持单一数据源）
     } on ApiException catch (e) {
       error = e.status == 401 ? 'unauthorized' : e.error;

@@ -11,10 +11,56 @@ import '../services/app_state.dart';
 import 'theme.dart';
 import 'ui_utils.dart';
 
+/// pf FFI 传输层：生产绑定真实 Rust 绑定；测试注入记录器驱动「启动/停止/删除」
+/// 全链路（评审 BUG-3 回归：删除运行中规则必须停掉监听与 SSH 会话）。
+class PfTransport {
+  const PfTransport();
+
+  Future<BigInt> connect({
+    required String host,
+    required int port,
+    required String user,
+    required String authKind,
+    required String secret,
+  }) =>
+      pf.pfConnect(
+        host: host,
+        port: port,
+        user: user,
+        authKind: authKind,
+        secret: secret,
+      );
+
+  Future<BigInt> listen({
+    required BigInt sessionId,
+    required String bindAddr,
+    required int localPort,
+    required String remoteHost,
+    required int remotePort,
+  }) =>
+      pf.pfListen(
+        sessionId: sessionId,
+        bindAddr: bindAddr,
+        localPort: localPort,
+        remoteHost: remoteHost,
+        remotePort: remotePort,
+      );
+
+  void closeForward({required BigInt sessionId, required BigInt forwardId}) =>
+      pf.pfCloseForward(sessionId: sessionId, forwardId: forwardId);
+
+  void disconnect({required BigInt sessionId}) =>
+      pf.pfDisconnect(sessionId: sessionId);
+}
+
 class PortForwardingPage extends StatefulWidget {
-  const PortForwardingPage({super.key, required this.app});
+  const PortForwardingPage({super.key, required this.app, this.transport});
 
   final AppState app;
+
+  /// pf FFI 传输层（默认真实绑定；测试注入替身，评审 BUG-3 回归用例）。
+  @visibleForTesting
+  final PfTransport? transport;
 
   @override
   State<PortForwardingPage> createState() => _PortForwardingPageState();
@@ -26,11 +72,13 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
   final _forwards = <String, BigInt>{};
   final _busy = <String>{}; // 启动/停止中的规则
 
+  PfTransport get _pf => widget.transport ?? const PfTransport();
+
   @override
   void dispose() {
     for (final s in _sessions.values) {
       try {
-        pf.pfDisconnect(sessionId: s);
+        _pf.disconnect(sessionId: s);
       } catch (_) {}
     }
     super.dispose();
@@ -66,7 +114,7 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
     setState(() => _busy.add(r.id));
     try {
       var session = _sessions[host.id];
-      session ??= await pf.pfConnect(
+      session ??= await _pf.connect(
         host: host.hostname,
         port: host.port,
         user: host.username,
@@ -74,7 +122,7 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
         secret: cred.secret,
       );
       _sessions[host.id] = session;
-      final fwd = await pf.pfListen(
+      final fwd = await _pf.listen(
         sessionId: session,
         bindAddr: r.bindAddr,
         localPort: r.localPort!,
@@ -103,7 +151,7 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
       final session = host == null ? null : _sessions[host.id];
       if (host != null && session != null) {
         final hostId = host.id;
-        pf.pfCloseForward(sessionId: session, forwardId: fwd);
+        _pf.closeForward(sessionId: session, forwardId: fwd);
         // 该会话上没有其他运行中的规则 → 一并断开 SSH
         final stillUsed = _forwards.keys.any((rid) {
           final other =
@@ -111,7 +159,7 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
           return other != null && other.hostId == hostId;
         });
         if (!stillUsed) {
-          pf.pfDisconnect(sessionId: session);
+          _pf.disconnect(sessionId: session);
           _sessions.remove(hostId);
         }
       }
@@ -171,8 +219,10 @@ class _PortForwardingPageState extends State<PortForwardingPage> {
       ),
     );
     if (ok != true) return;
-    final running = _forwards.remove(r.id);
-    if (running != null) await _stop(r);
+    // 停止运行中的转发（评审 BUG-3）：不得先 remove 再调 _stop——_stop 以 remove
+    // 返回值判空早退，预摘除会让 pf_close_forward/pf_disconnect 永不执行，
+    // 被删规则的监听端口与 SSH 隧道变成不可见的僵尸转发。
+    if (_forwards.containsKey(r.id)) await _stop(r);
     try {
       await widget.app.deletePortRule(r);
     } on ApiException catch (e) {

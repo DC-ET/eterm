@@ -271,7 +271,7 @@ CREATE TABLE audit_events (
 4. 成功 → upsert 实体行 + INSERT changes（`actor_device` 取认证上下文）→ 返回新 `rev`。
 5. `op=delete` → 置 `deleted_at` + 写 changes tombstone。
 
-**WS 通知**：连接后服务端推送 `{"type":"change","rev":"<latest>"}` 单一帧型；客户端收到后自行调 pull。服务端不做数据推送、不做订阅过滤。心跳：服务端 30s ping，两分钟无 pong 断开。重连由客户端指数退避负责。
+**WS 通知**：连接后服务端推送 `{"type":"change","rev":"<latest>"}` 单一帧型；客户端收到后自行调 pull。服务端不做数据推送；**订阅按 vault 过滤**（2026-11-27 评审 BUG-1：通知面与数据面同受租户边界约束，他 vault 的 push 不唤醒本 vault 客户端）。心跳：服务端 30s ping，两分钟无 pong 断开。重连由客户端指数退避负责。
 
 **导入导出（M3）**：`POST /import/ssh-config`、`POST /import/csv`、`GET /export/all?format=json|yaml`、`GET /export/ssh-config`。解析/生成实现为无状态纯函数，置于 `internal/ioconv/`；客户端 UI 触发，结果经同步通道收敛到各端。导出含凭据时要求客户端侧二次确认（PRD F9）；`ProxyCommand` 导入时忽略并返回忽略清单（PRD F9.2）。
 

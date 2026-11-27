@@ -138,6 +138,11 @@ export async function pushItem(
   const conn = await db.pool.getConnection();
   try {
     await conn.beginTransaction();
+    // 同 vault push 串行化（评审 BUG-2，2026-11-27）：changes 自增 id 在 INSERT 时分配、
+    // 随事务提交——若允许并发，「后分配 id 先提交」会让 pull 游标越过未提交事务的空洞，
+    // 该变更提交后对游标之后的拉取永久不可见。事务开头先锁 vault 行：任何同 vault 事务
+    // 不可能后提交，空洞无法形成（跨 vault 互不相干，仍并发）。
+    await conn.query(`SELECT rev FROM vaults WHERE id = ? FOR UPDATE`, [vaultId]);
     // 归属校验（评审 BUG-1）：只允许操作本 vault 的实体；他 vault 同 id 实体按"不存在"处理
     const [rows] = await conn.query<RowDataPacket[]>(
       `SELECT rev, deleted_at FROM ${ent.table} WHERE id = ? AND vault_id = ? FOR UPDATE`,

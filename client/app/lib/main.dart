@@ -129,6 +129,13 @@ class _BootState extends State<_Boot> {
         poke: () => app.refresh(silent: true)); // WS 实时同步（后台对账，不闪加载条）
     await app.bootstrap(); // 本地快照（离线可见）
     var username = sess.length >= 3 && sess[2].isNotEmpty ? sess[2] : '';
+    if (username.isEmpty) {
+      // 离线时 api.me() 会失败：读登录时落盘的用户名兜底（评审观察 1，
+      // 2026-11-27——此前离线启动 Settings 页账号区显示「?」+ 空名）
+      try {
+        username = local.kvGet(key: 'username');
+      } catch (_) {}
+    }
     try {
       username = await api.me(); // 在线则校验 token 并取最新用户名
       local.kvPut(key: 'username', value: username);

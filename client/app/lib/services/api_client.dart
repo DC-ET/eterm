@@ -58,12 +58,13 @@ class ApiClient {
     }
   }
 
-  /// 登录并保存认证 token。deviceName/platform 服务端必填。
+  /// 登录并保存认证 token。deviceName/platform 服务端必填——platform 为必传参数
+  /// （评审 BUG-5：曾有 'macos' 默认值，登录页不传导致移动端设备被登记为 macos）。
   Future<LoginResult> login(
     String username,
     String password, {
     required String deviceName,
-    String platform = 'macos',
+    required String platform,
   }) async {
     final j = await _req('POST', '/api/v1/auth/login', {
       'username': username,

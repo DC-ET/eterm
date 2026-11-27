@@ -65,7 +65,7 @@ export class SyncEngine {
         if ((r.rev ?? 0) > maxRev) maxRev = r.rev ?? 0;
       }
     }
-    if (anyOk) this.hub.broadcast(maxRev);
+    if (anyOk) this.hub.broadcast(vaultId, maxRev);
     return results;
   }
 }

@@ -114,7 +114,8 @@ class _SettingsPageState extends State<SettingsPage> {
               _navRow(
                 icon: Icons.lock_outline,
                 title: '修改密码',
-                subtitle: '验证原密码后设置新密码',
+                // 明示语义（评审观察 4）：改密不吊销其他已登录设备（服务端成文设计）
+                subtitle: '验证原密码后设置新密码（不影响其他已登录设备）',
                 onTap: _changePassword,
               ),
               _navRow(

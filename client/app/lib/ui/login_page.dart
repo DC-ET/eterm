@@ -2,6 +2,7 @@
 // token 保存在内存（M0 重启需重登）；OS 钥匙串持久化随 M1 落地。
 
 import 'dart:io' show Platform;
+import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
@@ -49,18 +50,12 @@ class _LoginPageState extends State<LoginPage> {
       final api = ApiClient(
         baseUrl: _server.text.trim().replaceAll(RegExp(r'/+$'), ''),
       );
+      final (deviceName, platform) = _deviceIdentity();
       final result = await api.login(
         _username.text.trim(),
         _password.text,
-        // 设备名分端（P10）：中枢设备管理页可辨识各端；
-        // 只影响新登录，存量 token 名不变（方案 §4.5）
-        deviceName: Platform.isMacOS
-            ? 'eterm-mac'
-            : Platform.isIOS
-                ? 'eterm-ios'
-                : Platform.isWindows
-                    ? 'eterm-windows'
-                    : 'eterm-android',
+        deviceName: deviceName,
+        platform: platform,
       );
       if (!mounted) return;
       // 会话持久化：token 密文落本地库（LKMK 钥匙串保护），重启免登录
@@ -68,7 +63,10 @@ class _LoginPageState extends State<LoginPage> {
       local.saveSession(server: server, token: result.token);
       local.kvPut(key: 'username', value: result.username);
       final app = AppState(api: api);
-      realtime.start(server, result.token, poke: app.refresh); // WS 实时同步
+      // WS 实时同步：对账一律静默（与启动链路同口径，评审 BUG-4——
+      // poke 不得传无参 tear-off，否则他端变更会闪顶部加载条）
+      realtime.start(server, result.token,
+          poke: () => app.refresh(silent: true));
       await app.bootstrap();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
@@ -86,9 +84,49 @@ class _LoginPageState extends State<LoginPage> {
             403 => '该账号没有个人库（no_vault）',
             _ => '登录失败: ${e.error}',
           });
+    } catch (e) {
+      // 本地会话保存失败（磁盘/本地库异常）不得静默吞掉：登录已在服务端
+      // 成功，用户需要知道为什么没进主壳（评审观察 2）
+      setState(() => _error = '登录成功但本地会话保存失败: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 设备身份（评审 BUG-5 / 观察 6）：platform 按端上报（不再默认 'macos'）；
+  /// deviceName 在分端前缀上追加本机唯一后缀（首登生成、kv 持久化复用）——
+  /// 固定名会让同平台两台设备共享 (user, name, platform) 行、后登者踢掉先登者的
+  /// token。后缀读取失败（本地库暂不可用）退化为固定名：登录仍可用。
+  (String, String) _deviceIdentity() {
+    final platform = Platform.isMacOS
+        ? 'macos'
+        : Platform.isWindows
+            ? 'windows'
+            : Platform.isIOS
+                ? 'ios'
+                : 'android';
+    final base = Platform.isMacOS
+        ? 'eterm-mac'
+        : Platform.isWindows
+            ? 'eterm-windows'
+            : Platform.isIOS
+                ? 'eterm-ios'
+                : 'eterm-android';
+    var suffix = '';
+    try {
+      suffix = local.kvGet(key: 'device.suffix');
+      if (suffix.isEmpty) {
+        suffix = _randomHex(6);
+        local.kvPut(key: 'device.suffix', value: suffix);
+      }
+    } catch (_) {}
+    return (suffix.isEmpty ? base : '$base-$suffix', platform);
+  }
+
+  String _randomHex(int n) {
+    const chars = '0123456789abcdef';
+    final r = Random.secure();
+    return List.generate(n, (_) => chars[r.nextInt(16)]).join();
   }
 
   @override

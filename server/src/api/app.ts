@@ -91,6 +91,12 @@ const buckets = new Map<string, { tokens: number; last: number }>();
 function rateLimitLogin(ip: string | null): boolean {
   if (!ip) return true;
   const now = Date.now();
+  // 淘汰：直暴公网时按 IP 无界增长（评审观察 3）——超阈值清 10 分钟未见的老条目
+  if (buckets.size > 4096) {
+    for (const [k, b] of buckets) {
+      if (now - b.last > 600_000) buckets.delete(k);
+    }
+  }
   let b = buckets.get(ip);
   if (!b) {
     b = { tokens: 10, last: now };
@@ -105,6 +111,15 @@ function rateLimitLogin(ip: string | null): boolean {
 
 // last_seen 节流：每设备 24h 一次
 const lastSeen = new Map<string, number>();
+
+function pruneLastSeen(now: number): void {
+  // 淘汰：设备数天然有界，防御性清 48h 未见的老条目（评审观察 3）
+  if (lastSeen.size > 4096) {
+    for (const [k, t] of lastSeen) {
+      if (now - t > 48 * 3600_000) lastSeen.delete(k);
+    }
+  }
+}
 
 // ---------- 应用工厂 ----------
 
@@ -189,6 +204,7 @@ export function buildApp(
       return null;
     }
     const now = Date.now();
+    pruneLastSeen(now);
     const last = lastSeen.get(found.device.id) ?? 0;
     if (now - last > 24 * 3600 * 1000) {
       lastSeen.set(found.device.id, now);
@@ -419,7 +435,8 @@ function wsHandler(deps: Deps, authCtx: (req: FastifyRequest) => Promise<UserCtx
         socket.close(1008, "unauthorized");
         return;
       }
-      const unsub = deps.hub.subscribe((rev) => {
+      // 订阅限定本 vault（评审 BUG-1）：他 vault 的 push 不通知本连接
+      const unsub = deps.hub.subscribe(deps.db.uuidToBytes(ctx.vaultId), (rev) => {
         try {
           socket.send(JSON.stringify({ type: "change", rev }));
         } catch {
