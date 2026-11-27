@@ -2,7 +2,7 @@ name: eterm
 description: "eterm 客户端（服务端数据中枢的用户壳）"
 publish_to: 'none'
 
-version: 1.0.2+8
+version: 1.0.2+9
 
 environment:
   sdk: ^3.14.0
